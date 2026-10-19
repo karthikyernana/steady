@@ -6,3 +6,4 @@ tests/export-sample.json
 .DS_Store
 .vercel/
 dist/
+tests/qa/shots/

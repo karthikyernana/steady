@@ -1,4 +1,4 @@
-// Steady service worker: offline app shell (stale-while-revalidate) + notification clicks.
+// Steady service worker: offline app shell (network-first, cache fallback) + Web Push + notification clicks.
 const VERSION = 'steady-v1.0.0';
 const SHELL = [
   './',
@@ -45,22 +45,22 @@ self.addEventListener('activate', e => {
   e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== VERSION).map(k => caches.delete(k)))).then(() => self.clients.claim()));
 });
 
+// Network-first with a short timeout, cache as the offline fallback. Every deploy is picked up on the next open
+// (no "old app on new data" window), and the app still opens instantly offline.
+const fromNet = (req, key) => fetch(req).then(r => { if (r.ok && r.type === 'basic') { const c = r.clone(); caches.open(VERSION).then(x => x.put(key || req, c)); } return r; });
+const timeout = (ms, p) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))]);
 self.addEventListener('fetch', e => {
   const req = e.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
-  if (url.origin !== location.origin) return; // GitHub API, ntfy: always network
-  if (req.mode === 'navigate') {
-    e.respondWith(caches.match('./index.html').then(cached => {
-      const net = fetch(req).then(r => { if (r.ok) caches.open(VERSION).then(c => c.put('./index.html', r.clone())); return r; }).catch(() => cached);
-      return cached || net;
-    }));
+  if (url.origin !== location.origin || url.pathname.startsWith('/api/') || url.pathname.startsWith('/source/')) return; // API and third parties: always network
+  if (url.pathname.startsWith('/fonts/') || url.pathname.startsWith('/icons/')) {
+    e.respondWith(caches.match(req).then(c => c || fromNet(req)));   // immutable assets: cache-first
     return;
   }
-  e.respondWith(caches.match(req, { ignoreSearch: true }).then(cached => {
-    const net = fetch(req).then(r => { if (r.ok && r.type === 'basic') caches.open(VERSION).then(c => c.put(req, r.clone())); return r; }).catch(() => cached);
-    return cached || net;
-  }));
+  const key = req.mode === 'navigate' ? './index.html' : req;
+  const net = fromNet(req, key);
+  e.respondWith(timeout(2500, net).catch(() => caches.match(key, { ignoreSearch: true }).then(c => c || net)));
 });
 
 // Web Push from Steady's server (see server/push.js)

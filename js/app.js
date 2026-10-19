@@ -8,7 +8,7 @@ import { renderThoughts, mountThoughts } from './ui/views/thoughts.js';
 import { renderInsights, insightsForExport } from './ui/views/insights.js';
 import { renderSettings, mountSettings, openSignIn } from './ui/views/settings.js';
 import { renderOnboarding, mountOnboarding, mark } from './ui/views/onboarding.js';
-import { syncNow, onStatus, initStatus, cloudReady, getStatus, markDirty, checkSession } from './data/sync.js';
+import { syncNow, onStatus, initStatus, cloudReady, getStatus, markDirty, checkSession, startLive } from './data/sync.js';
 import * as motion from './ui/motion.js';
 import { startLocalScheduler, reconcileNtfy, reconcileRemote, enablePush, requestPermission, permission } from './platform/notify.js';
 
@@ -37,6 +37,7 @@ let lastPointer = null;
 addEventListener('pointerdown', e => { lastPointer = [e.clientX, e.clientY]; }, { capture: true, passive: true });
 window.__applyTheme = () => { const p = lastPointer || []; motion.themeSwap(applyTheme, p[0], p[1]); };
 motion.installCssSprings();
+window.__applyStyle = v => { const p = lastPointer || []; motion.themeSwap(() => { document.documentElement.dataset.style = v; }, p[0], p[1]); };
 mq.addEventListener?.('change', applyTheme);
 
 // ---------- shell ----------
@@ -56,7 +57,7 @@ function shell() {
 
 function syncChip(st, long) {
   if (!cloudReady()) return long ? `<a class="sync-chip off" href="#/you" data-testid="sync-chip">${I.sync}<span>Sync is off</span></a>` : '';
-  const label = st.state === 'syncing' ? 'Syncing…' : st.state === 'error' ? 'Sync issue' : st.state === 'offline' ? 'Offline' : `Synced ${ago(st.lastSyncedAt || local('lastSyncedAt'))}`;
+  const label = st.state === 'live' ? 'Live' : st.state === 'syncing' ? 'Syncing…' : st.state === 'error' ? 'Sync issue' : st.state === 'offline' ? 'Offline' : `Synced ${ago(st.lastSyncedAt || local('lastSyncedAt'))}`;
   return `<button class="sync-chip ${st.state}" data-act="sync-chip" data-testid="sync-chip" title="${esc(st.error || 'Sync now')}" aria-label="${esc(label)}. Sync now">${I.sync}<span>${esc(label)}</span></button>`;
 }
 function paintSync() {
@@ -89,28 +90,34 @@ function render() {
   const view = document.getElementById('view');
   const order = Object.keys(ROUTES);
   const dir = view.dataset.route ? Math.sign(order.indexOf(r) - order.indexOf(view.dataset.route)) : 0;
-  const before = view.dataset.route === r ? motion.snapshot(view) : null;
-  // keep in-progress typing and focus across re-renders
-  const kept = {};
-  view.querySelectorAll('[data-keep]').forEach(el => { kept[el.id] = { v: el.value, focus: document.activeElement === el, s: el.selectionStart, e: el.selectionEnd }; });
-  const scroll = window.scrollY;
   const changed = view.dataset.route !== r;
-  view.dataset.route = r;
-  view.innerHTML = `<div class="view-inner v-${r}">${ROUTES[r].render()}</div>`;
-  for (const [id, k] of Object.entries(kept)) {
-    const el = document.getElementById(id); if (!el) continue;
-    el.value = k.v;
-    if (k.focus) { el.focus({ preventScroll: true }); try { el.setSelectionRange(k.s, k.e); } catch { /* type=search */ } }
+  const before = changed ? null : motion.snapshot(view);
+  const scroll = window.scrollY;
+  const swap = () => {
+    // keep in-progress typing and focus across re-renders (read at swap time: a view transition runs this a frame later)
+    const kept = {};
+    view.querySelectorAll('[data-keep]').forEach(el => { kept[el.id] = { v: el.value, focus: document.activeElement === el, s: el.selectionStart, e: el.selectionEnd }; });
+    view.dataset.route = r;
+    view.innerHTML = `<div class="view-inner v-${r}">${ROUTES[r].render()}</div>`;
+    for (const [id, k] of Object.entries(kept)) {
+      const el = document.getElementById(id); if (!el) continue;
+      el.value = k.v;
+      if (k.focus) { el.focus({ preventScroll: true }); try { el.setSelectionRange(k.s, k.e); } catch { /* type=search */ } }
+    }
+    ROUTES[r].mount?.(view);
+    document.querySelectorAll('[data-route]').forEach(a => { const on = a.dataset.route === r; a.classList.toggle('on', on); on ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current'); });
+    document.title = r === 'today' ? 'Steady' : `${ROUTES[r].label} · Steady`;
+    window.scrollTo(0, changed ? 0 : scroll);
+    motion.segs(view);
+  };
+  if (changed && !fresh) {
+    // route change: one composited cross-slide of the page (View Transitions) — no per-element work, no flash
+    motion.routeSwap(swap, dir, () => { motion.indicators(true); motion.rings(view, true); motion.bars(view, true); motion.charts(view); });
+  } else {
+    swap();
+    if (fresh) { motion.rings(view, true); requestAnimationFrame(() => motion.indicators(false)); }
+    else { if (before) motion.flip(before, view); motion.rings(view, false); motion.bars(view, false); motion.indicators(false); }
   }
-  ROUTES[r].mount?.(view);
-  document.querySelectorAll('[data-route]').forEach(a => { const on = a.dataset.route === r; a.classList.toggle('on', on); on ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current'); });
-  document.title = r === 'today' ? 'Steady' : `${ROUTES[r].label} · Steady`;
-  if (changed) window.scrollTo(0, 0); else window.scrollTo(0, scroll);
-  motion.segs(view);
-  if (changed) { motion.routeIn(view, dir); motion.rings(view, true); }
-  else { if (before) motion.flip(before, view); motion.rings(view, false); motion.bars(view, false); }
-  motion.indicators(changed && !fresh);
-  if (fresh) requestAnimationFrame(() => motion.indicators(false));
   paintSync();
 }
 const scheduleRender = (() => { let q = false; const run = () => {
@@ -161,7 +168,7 @@ window.__askNotifications = async () => {
 };
 
 // ---------- sync triggers ----------
-const syncSoon = debounce(() => { if (cloudReady()) syncNow('change'); }, 2500);
+const syncSoon = debounce(() => { if (cloudReady()) syncNow('change'); }, 600);
 window.__markDirty = syncSoon;
 const reconcileSoon = debounce(() => reconcileNtfy(), 1500);
 onChange(d => {
@@ -173,7 +180,7 @@ onChange(d => {
 let lastState = null;
 onStatus(st => {
   paintSync();
-  if (st.state === 'ok' && lastState !== 'ok-' + st.lastSyncedAt) { lastState = 'ok-' + st.lastSyncedAt; reconcileRemote(); }
+  if ((st.state === 'ok' || st.state === 'live') && st.lastSyncedAt && lastState !== 'ok-' + st.lastSyncedAt) { lastState = 'ok-' + st.lastSyncedAt; reconcileRemote(); }
   if (st.state === 'signedout') scheduleRender();
 });
 const syncIfStale = (min = 20e3) => { if (cloudReady() && Date.now() - (local('lastSyncedAt') || 0) > min) syncNow('focus'); };
@@ -191,7 +198,13 @@ setInterval(() => { const d = new Date().toDateString(); if (d !== lastDay) { la
 // ---------- boot ----------
 async function boot() {
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('./sw.js').catch(e => console.warn('SW', e));
+    const hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.register('./sw.js').then(reg => {
+      document.addEventListener('visibilitychange', () => { if (!document.hidden) reg.update().catch(() => {}); });
+    }).catch(e => console.warn('SW', e));
+    // a new version took over: reload once so code and cache always match
+    let reloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController && !reloaded) { reloaded = true; location.reload(); } });
     navigator.serviceWorker.addEventListener('message', e => { if (e.data?.type === 'open-checkin') openCheckin(); });
   }
   await load();

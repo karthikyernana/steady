@@ -1,40 +1,14 @@
 # Testing
 
-## Layers
-| Layer | Tool | Where | What |
-| --- | --- | --- | --- |
-| Unit | `node:test` (Node 20+) | `tests/unit/*.test.mjs` | Quick-add parser, merge/tombstones/prune, schema + migrations (incl. newer-schema refusal, idempotency, forward-compat fields), adaptive engine rules, voice lines. |
-| Static | Node | `tests/check-shell.mjs` | Every module import resolves, every module is precached by the SW, manifest icons exist, maskable icon present. |
-| End-to-end | Playwright (Chromium) | `tests/e2e.py` | Real browser flows at 412×915, 360×740, 1440×900 in light and dark. |
-| Accessibility | axe-core in Playwright | `tests/e2e.py` | WCAG 2.1 A/AA + best-practice rules on key screens. |
-| Layout audit | Playwright | `tests/e2e.py` (`ui_audit`) | Horizontal overflow, off-screen controls, tap targets < 44 px, clipped text. |
-| PWA | Chrome DevTools Protocol | `tests/e2e.py` (`pwa`) | `Page.getInstallabilityErrors`, manifest errors, icons reachable. |
-| Performance | Lighthouse 12 | `npx lighthouse` | Performance, accessibility, best practices scores. |
+| Layer | Command | What it covers |
+| --- | --- | --- |
+| Unit | `npm test` | Pure core: quick-add parser (dates, times, durations, filler words, goal linking), adaptive engine, merge, schema migrations. |
+| Static | `npm run check` | Every client module is precached by the service worker; import graph resolves; manifest icons exist. |
+| API | `TEST_DATABASE_URL=… npm run test:api` | Router against a real Postgres (non-superuser role so RLS applies). |
+| End-to-end | `python3 tests/qa/sync_e2e.py http://localhost:8765/` | Two browsers: onboarding, quick-add chips, account create (email → password, no silent sign-up), wrong password, login on a 2nd device, live sync both ways, tab switching, console errors. |
+| Layout audit | `python3 tests/qa/audit.py http://localhost:8765/ <tag>` | Every screen at 360/412 px (touch) and 1366/1536 px (Windows), light + dark: horizontal overflow, tap targets < 44 px, clipped text; screenshots to `tests/qa/shots/`. |
 
-## Run
-```bash
-npm test                 # unit
-npm run check            # static
-bash tests/setup.sh      # once per machine
-mkdir -p /tmp/srv && ln -sfn "$PWD" /tmp/srv/steady && (cd /tmp/srv && python3 -m http.server 8765 &)   # app at http://localhost:8765/steady/ (same sub-path as GitHub Pages)
-bash tests/run_all.sh    # every E2E suite in its own process; screenshots in tests/shots/
-python3 tests/e2e.py --only core-mobile-light   # one suite
-python3 tests/e2e.py --only realsync --real-github owner/steady-data   # real two-device sync against GitHub
-```
+Local stack: `DATABASE_URL=postgres://… npm run migrate && DATABASE_URL=postgres://… PORT=8765 npm run dev`.
+Playwright: `pip install playwright==1.49.1 && python3 -m playwright install --with-deps chromium`.
 
-## E2E coverage
-| Suite | Checks |
-| --- | --- |
-| `core-<viewport>-<theme>` ×6 | onboarding; quick-add parsing (example, tomorrow, priority, ambiguous time, rollover); complete/undo/skip; edit sheet; goals (milestones, progress, action → today); thoughts (tags, mood, search, filter); evening check-in; insights with 30 days of seeded data; slump → minimum viable day; carry-over; reminder suggestion; ntfy topic generation; theme switch; visible keyboard focus; no console errors; screenshots + layout audit + axe on every screen. |
-| `screens` | Populated screens and sheets at all sizes/themes for the visual pass. |
-| `export` | Export → import into a fresh device; re-import is idempotent. |
-| `offline` | SW controls page, ≥ 30 files cached, offline reload, add task offline, charts and fonts offline. |
-| `notif` | Permission granted flow + SW `showNotification`; gentle permission ask after the first timed task. |
-| `ntfy` | Browser publish to ntfy.sh (CORS); test publish 200 on a public ntfy instance; scheduled reminder `POST /<topic>/st-<id>` with `At` (server echoes the scheduled time); completion sends `DELETE`. |
-| `sync` | Mock GitHub contents API with real sha semantics: bad token error; connect; pairing via key; both devices offline edits + delete + conflicting edit → identical merged state; forced 409 → retry; Sync now + last-synced; debounced auto-sync; file shape; Hark snapshot. |
-| `pairlink` | `#pair=<key>` deep link (what the QR encodes) on a fresh device. |
-| `realsync` | Same two-device flow against the real private repo through the GitHub API. |
-| `pwa` | Installability with zero errors, manifest + icons. |
-
-## CI
-`.github/workflows/ci.yml` runs unit + static on every push, then the E2E suites (minus internet-dependent `ntfy`/`realsync`) with Playwright.
+CI (`.github/workflows/ci.yml`) runs unit + static on every push.

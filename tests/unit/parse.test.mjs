@@ -38,3 +38,37 @@ test('low priority and explicit reminder keyword', () => {
   const r = parseQuick('remind me water plants p3', opts(at(9)));
   assert.equal(r.priority, 1); assert.equal(r.reminder, true); assert.equal(r.title, 'Water plants');
 });
+
+// ---- v1.2: understands more of how people type ----
+test('filler words are dropped; "remind me to" turns on the reminder', () => {
+  const r = parseQuick('remind me to pay rent on the 1st', opts(at(9)));
+  assert.equal(r.title, 'Pay rent'); assert.equal(r.reminder, true); assert.equal(r.dueDate, '2026-11-01');
+  assert.equal(parseQuick('I need to call the bank', opts(at(9))).title, 'Call the bank');
+  assert.equal(parseQuick('have dinner with Ravi', opts(at(9))).title, 'Have dinner with Ravi');
+});
+test('month dates, day/month and "next week"', () => {
+  assert.equal(parseQuick('dentist 25 oct at 4', opts(at(9))).dueDate, '2026-10-25');
+  assert.equal(parseQuick('dentist 25 oct at 4', opts(at(9))).dueTime, '16:00');
+  assert.equal(parseQuick('renew passport jan 5', opts(at(9))).dueDate, '2027-01-05');
+  assert.equal(parseQuick('fees 30/10', opts(at(9))).dueDate, '2026-10-30');
+  assert.equal(parseQuick('plan sprint next week', opts(at(9))).dueDate, '2026-10-19');
+  assert.equal(parseQuick('call dad day after tomorrow', opts(at(9))).dueDate, '2026-10-18');
+});
+test('relative times, eod and asap', () => {
+  const r = parseQuick('stretch in 2 hours', opts(at(9, 10)));
+  assert.equal(r.title, 'Stretch'); assert.equal(r.dueTime, '11:10'); assert.equal(r.durationMin, null);
+  const e = parseQuick('submit report by eod asap', opts(at(9)));
+  assert.equal(e.title, 'Submit report'); assert.equal(e.dueTime, '18:00'); assert.equal(e.priority, 3);
+  assert.equal(parseQuick('lunch with team at lunch', opts(at(9))).dueTime, '13:00');
+});
+test('durations like 1h30 and half an hour', () => {
+  assert.equal(parseQuick('deep work 1h30', opts(at(9))).durationMin, 90);
+  assert.equal(parseQuick('walk for half an hour', opts(at(9))).durationMin, 30);
+});
+test('links itself to a goal when it names one of its actions', () => {
+  const goals = [{ id: 'g1', title: 'Land my first paying client', actions: [{ title: 'Send 3 cold DMs' }, { title: 'Post on LinkedIn' }] }, { id: 'g2', title: 'Gym 4x a week', actions: [{ title: 'Gym session' }] }];
+  assert.equal(parseQuick('post on linkedin at 6pm', { ...opts(at(9)), goals }).goalId, 'g1');
+  assert.equal(parseQuick('gym session 45m', { ...opts(at(9)), goals }).goalId, 'g2');
+  assert.equal(parseQuick('pitch a client in Jalandhar', { ...opts(at(9)), goals }).goalId, 'g1');
+  assert.equal(parseQuick('buy milk', { ...opts(at(9)), goals }).goalId, null);
+});

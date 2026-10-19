@@ -1,7 +1,7 @@
 // The whole API in one function (Vercel Hobby allows 12; one router keeps it simple). Mounted at /api/*.
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { query, withOwner } from './db.js';
-import { currentOwner, startSession, endSession, verifyGoogleIdToken, passphraseHash, checkPassphrase, hashPassphrase, setupAvailable, tooManyAttempts, logAttempt, hashToken } from './auth.js';
+import { currentOwner, startSession, endSession, verifyGoogleIdToken, checkPassphrase, tooManyAttempts, logAttempt, hashToken, findOwner, createOwner, setPassword, signupMode, mayCreate, normEmail, validEmail, verifyGithubOidc } from './auth.js';
 import { migrate } from './migrate.js';
 import { sendDue } from './push.js';
 
@@ -35,21 +35,69 @@ function requireCsrf(req) {
   if (origin) { const host = req.headers['x-forwarded-host'] || req.headers.host; if (new URL(origin).host !== host) fail(403, 'Cross-origin request'); }
 }
 const safeEq = (a, b) => { const x = Buffer.from(String(a)), y = Buffer.from(String(b)); return x.length === y.length && timingSafeEqual(x, y); };
-const ownerEmail = () => (process.env.OWNER_EMAILS || process.env.ALLOWED_EMAIL || 'karthikyernana@gmail.com').split(',')[0].trim().toLowerCase();
 const ipOf = req => String(req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '').split(',')[0].trim() || null;
 
 async function me(req) { const o = await currentOwner(req); if (!o) fail(401, 'Sign in to sync'); return o; }
 
 const routes = {
   'GET config': async () => ({
-    googleClientId: process.env.GOOGLE_CLIENT_ID || null,
-    passphrase: process.env.DATABASE_URL ? !!(await passphraseHash().catch(() => null)) : false,
-    setup: process.env.DATABASE_URL ? await setupAvailable().catch(() => false) : false,
-    vapidPublicKey: process.env.VAPID_PUBLIC_KEY || null,
     db: !!process.env.DATABASE_URL,
+    accounts: !!process.env.DATABASE_URL,
+    signup: signupMode(),
+    googleClientId: process.env.GOOGLE_CLIENT_ID || null,
+    vapidPublicKey: process.env.VAPID_PUBLIC_KEY || null,
   }),
 
   'GET auth/me': async req => { const o = await currentOwner(req); return o ? { signedIn: true, email: o.email } : { signedIn: false }; },
+
+  // step 1 of the sign-in sheet: does this email already have an account?
+  'POST auth/check': async (req, res, body) => {
+    requireCsrf(req);
+    const email = normEmail(body.email);
+    if (!validEmail(email)) fail(400, 'Enter a valid email address.');
+    if (await tooManyAttempts(ipOf(req))) fail(429, 'Too many attempts. Try again in an hour.');
+    const o = await findOwner(email);
+    return { exists: !!o?.password_hash, canCreate: !o?.password_hash && mayCreate(email) };
+  },
+
+  'POST auth/signup': async (req, res, body) => {
+    requireCsrf(req);
+    const ip = ipOf(req);
+    if (await tooManyAttempts(ip)) fail(429, 'Too many attempts. Try again in an hour.');
+    const email = normEmail(body.email), password = body.password, name = String(body.name || '').trim().slice(0, 60);
+    if (!validEmail(email)) fail(400, 'Enter a valid email address.');
+    if (typeof password !== 'string' || password.length < 8) fail(400, 'Use at least 8 characters for your password.');
+    if (password.length > 200) fail(400, 'That password is too long.');
+    const existing = await findOwner(email);
+    if (existing?.password_hash) fail(409, 'There is already an account with this email. Sign in instead.');
+    if (!mayCreate(email)) fail(403, 'Sign-ups are closed on this Steady.');
+    if (existing) { await setPassword(existing.id, password); if (name) await query('update owners set name = $2 where id = $1', [existing.id, name]); }
+    else await createOwner(email, password, name);
+    const o = await startSession(res, req, email, body.device);
+    return { signedIn: true, email: o.email, created: true };
+  },
+
+  'POST auth/login': async (req, res, body) => {
+    requireCsrf(req);
+    const ip = ipOf(req);
+    if (await tooManyAttempts(ip)) fail(429, 'Too many attempts. Try again in an hour.');
+    const o = await findOwner(body.email);
+    const ok = !!o?.password_hash && checkPassphrase(String(body.password || ''), o.password_hash);
+    await logAttempt(ip, ok);
+    if (!ok) fail(401, 'That email and password do not match.');
+    const s = await startSession(res, req, o.email, body.device);
+    return { signedIn: true, email: s.email };
+  },
+
+  'POST auth/password': async (req, res, body) => {
+    requireCsrf(req);
+    const me_ = await me(req);
+    const o = await findOwner(me_.email);
+    if (o.password_hash && !checkPassphrase(String(body.current || ''), o.password_hash)) fail(401, 'Your current password is not right.');
+    if (typeof body.password !== 'string' || body.password.length < 8) fail(400, 'Use at least 8 characters for your password.');
+    await setPassword(o.id, body.password);
+    return { ok: true };
+  },
 
   'POST auth/google': async (req, res, body) => {
     requireCsrf(req);
@@ -58,44 +106,15 @@ const routes = {
     return { signedIn: true, email: o.email };
   },
 
-  // one-time owner setup: the SETUP_CODE env var + a new passphrase; works exactly once, ever
-  'POST auth/setup': async (req, res, body) => {
+  // deletes the account and every synced record on the server; the device keeps its local copy
+  'POST auth/delete': async (req, res, body) => {
     requireCsrf(req);
-    const ip = ipOf(req);
-    if (await tooManyAttempts(ip)) fail(429, 'Too many attempts. Try again in an hour.');
-    if (!(await setupAvailable())) fail(410, 'Setup is already done. Sign in with your passphrase.');
-    const okCode = typeof body.code === 'string' && safeEq(body.code.trim(), process.env.SETUP_CODE);
-    await logAttempt(ip, okCode);
-    if (!okCode) fail(401, 'That setup code is not right.');
-    if (typeof body.passphrase !== 'string' || body.passphrase.length < 10) fail(400, 'Choose a passphrase of at least 10 characters.');
-    const { rowCount } = await query('insert into setup_state (id) values (true) on conflict do nothing');
-    if (!rowCount) fail(410, 'Setup is already done.');
-    const o = await startSession(res, req, ownerEmail(), body.device);
-    await query(`insert into owner_credentials (owner_id, passphrase_hash) values ($1, $2)
-                 on conflict (owner_id) do update set passphrase_hash = excluded.passphrase_hash, updated_at = now()`, [o.id, hashPassphrase(body.passphrase)]);
-    return { signedIn: true, email: o.email };
-  },
-
-  'POST auth/change-passphrase': async (req, res, body) => {
-    requireCsrf(req);
-    const o = await me(req);
-    if (typeof body.passphrase !== 'string' || body.passphrase.length < 10) fail(400, 'Choose a passphrase of at least 10 characters.');
-    await query(`insert into owner_credentials (owner_id, passphrase_hash) values ($1, $2)
-                 on conflict (owner_id) do update set passphrase_hash = excluded.passphrase_hash, updated_at = now()`, [o.id, hashPassphrase(body.passphrase)]);
-    return { ok: true };
-  },
-
-  'POST auth/passphrase': async (req, res, body) => {
-    requireCsrf(req);
-    const stored = await passphraseHash();
-    if (!stored) fail(501, 'Passphrase sign-in is not set up yet');
-    const ip = ipOf(req);
-    if (await tooManyAttempts(ip)) fail(429, 'Too many attempts. Try again in an hour.');
-    const ok = checkPassphrase(body.passphrase, stored);
-    await logAttempt(ip, ok);
-    if (!ok) fail(401, 'That passphrase is not right.');
-    const o = await startSession(res, req, ownerEmail(), body.device);
-    return { signedIn: true, email: o.email };
+    const me_ = await me(req);
+    const o = await findOwner(me_.email);
+    if (o.password_hash && !checkPassphrase(String(body.password || ''), o.password_hash)) fail(401, 'Your password is not right.');
+    await query('delete from owners where id = $1', [o.id]);
+    await endSession(res, req);
+    return { deleted: true };
   },
 
   'POST auth/logout': async (req, res) => { requireCsrf(req); await endSession(res, req); return { signedIn: false }; },
@@ -125,6 +144,19 @@ const routes = {
       cursor: rows.length ? Number(rows[rows.length - 1].seq) : since,
       more: rows.length === limit,
     };
+  },
+
+  // live sync: holds the request open (up to ~20 s) until this account has records newer than `since`
+  'GET sync/wait': async req => {
+    const o = await me(req);
+    const since = Math.max(0, Number(new URL(req.url, 'http://x').searchParams.get('since')) || 0);
+    const until = Date.now() + Math.min(20_000, Number(process.env.SYNC_WAIT_MS) || 20_000);
+    for (;;) {
+      const top = await withOwner(o.id, async c => Number((await c.query('select coalesce(max(seq), 0) as s from records where owner_id = app_owner()')).rows[0].s));
+      if (top > since) return { changed: true, cursor: top };
+      if (Date.now() > until) return { changed: false, cursor: since };
+      await new Promise(r => setTimeout(r, 1500));
+    }
   },
 
   // ---- web push ----
@@ -215,7 +247,8 @@ const routes = {
   'POST cron/reminders': async req => {
     const want = process.env.CRON_SECRET;
     const got = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
-    if (!want || want.length < 16 || !safeEq(got, want)) fail(401, 'unauthorized');
+    const ok = (want && want.length >= 16 && safeEq(got, want)) || (got.split('.').length === 3 && await verifyGithubOidc(got));
+    if (!ok) fail(401, 'unauthorized');
     return sendDue();
   },
 };

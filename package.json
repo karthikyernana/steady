@@ -1,6 +1,6 @@
 {
   "name": "steady",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "description": "Steady: a calm, adaptive, local-first personal tracker PWA.",
   "type": "module",

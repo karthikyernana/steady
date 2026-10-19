@@ -2,67 +2,97 @@
 
 **A calm, adaptive personal tracker that learns how you work, and keeps you consistent on the days motivation doesn't show up.**
 
-Built for one person (Karthik) first. Local-first, offline, installable on Android, no server, no account. Your data lives on your devices and, if you choose, in a private GitHub repo that only you own.
+Tasks, goals with weekly milestones, thoughts, and insights that learn your patterns. Installable on Android, Windows, macOS and iOS as an app. Works fully offline, and syncs live across your devices through your own Steady account.
 
-**Live app:** https://karthikyernana.github.io/steady/
+**Live app:** https://steady-swart-mu.vercel.app · **Source:** https://github.com/karthikyernana/steady
 
 ---
 
 ## Why it exists
 
-Motivation lasts a day or two. Generic to-do apps assume it lasts forever, so they pile up guilt. Steady does the opposite: it watches what you actually finish, learns your best hours and days, and when you've been missing it shrinks the day to a *minimum viable day* of one to three tiny things. Small days count.
+Motivation lasts a day or two. Generic to-do apps assume it lasts forever, so they pile up guilt. Steady watches what you actually finish, learns your best hours and days, and when you've been missing it shrinks the day to a *minimum viable day* of one to three tiny things. Small days count.
 
 ## Features
 
 | Area | What it does |
 | --- | --- |
-| **Today** | Quick-add in plain language (`linkedin 20 min at 6pm`, `call mom tomorrow 7:30pm !`), priorities, due time, reminders, done / skip / undo, gentle carry-over of unfinished tasks, an evening check-in card. |
+| **Today** | Quick-add in plain language (see below), priorities, due time, reminders, done / skip / undo, gentle carry-over, an evening check-in. |
 | **Goals** | Long goals broken into weekly milestones and small daily actions; one tap sends an action to Today; progress bars. |
-| **Thoughts** | Quick capture for ideas, notes and journal lines with `#tags` and mood; search and tag filters. |
-| **Insights** | Streaks, a contribution-style heatmap, completion by weekday and hour, energy vs output, recent wins. Inline SVG charts, no CDN. |
-| **Adaptive engine** | Learns best hours/days, suggests reminder times, caps daily load, detects slumps and offers a minimum viable day, and explains every pattern in plain sentences ("You finish most of your tasks between 9–11 PM"). Rule-based and on-device. See [docs/ADAPTIVE_ENGINE.md](docs/ADAPTIVE_ENGINE.md). |
-| **Reminders** | Local notifications via the service worker, plus reliable Android reminders through [ntfy](https://ntfy.sh) scheduled delivery, no server of ours. |
-| **Sync** | Laptop and phone stay in step through your own private GitHub repo (`data/state.json`), merged per record with tombstones. Sync now button, auto-sync on open/focus/change, QR pairing. |
-| **Data** | Export/Import JSON (merging, never clobbering), versioned schema with migrations. |
-| **Hark plugin** | Optional and off by default. Hark can read the same private repo; Steady never depends on Hark. |
+| **Thoughts** | Capture ideas, notes and journal lines with `#tags` and mood; search and tag filters. |
+| **Insights** | Streaks, a contribution-style heatmap, completion by weekday and hour, energy vs output, recent wins. Inline SVG charts. |
+| **Adaptive engine** | Learns best hours/days, suggests reminder times, caps daily load, detects slumps and offers a minimum viable day, and explains every pattern in plain sentences. On-device. See [docs/ADAPTIVE_ENGINE.md](docs/ADAPTIVE_ENGINE.md). |
+| **Accounts + live sync** | Email + password account. Every change is pushed within ~0.6 s and other open devices receive it within ~1–2 s (long-poll). Offline edits queue and merge per record, newest wins. |
+| **Reminders** | Local notifications while open; Web Push when closed (server queue + a 5-minute GitHub Actions trigger); optional ntfy backup channel. |
+| **Data** | Export/Import JSON (merging, never clobbering), versioned schema with migrations, delete-account. |
+| **Design** | Two styles: *Liquid glass* (spring-physics motion, translucent surfaces) and *Paper* (flat, opaque, lightest on older phones). Light/dark/system. Honors reduced motion and reduced transparency. |
+| **Hark plugin** | Optional read-only API key so Hark can coach from your data. Steady never depends on Hark. |
 
-## Install on Android
+### Quick-add understands how you type
 
-1. Open **https://karthikyernana.github.io/steady/** in Chrome on your phone.
-2. Tap **⋮ → Add to Home screen → Install** (or the *Install* card inside Steady).
-3. Open Steady from the home screen. It works offline from then on.
-
-## Set up phone reminders (ntfy), 2 minutes
-
-1. In Steady: **You → Phone reminders that always arrive →** switch on. A long random private topic is generated for you.
-2. Install **ntfy** from [Google Play](https://play.google.com/store/apps/details?id=io.heckel.ntfy) or [F-Droid](https://f-droid.org/packages/io.heckel.ntfy/).
-3. In ntfy tap **+**, paste the topic, keep the server `ntfy.sh`, subscribe.
-4. Back in Steady tap **Send test notification**.
-
-Reminders up to 3 days ahead are scheduled on ntfy immediately (`At:` header, ntfy's limit); later ones are queued automatically the next time you open Steady. Finishing or deleting a task cancels its reminder. The topic is like a password: anyone who knows it can read your reminders. A different ntfy server can be set under *Advanced*.
-
-## Set up sync between devices, 3 minutes, once
-
-1. Create a **private** GitHub repo, e.g. `steady-data`.
-2. Create a [fine-grained token](https://github.com/settings/personal-access-tokens/new): *Only select repositories →* `steady-data`; *Permissions → Contents: Read and write*.
-3. In Steady: **You → Sync across devices →** paste `username/steady-data` and the token → **Connect**.
-4. On the second device: **You → Pair another device** shows a QR code. Scan it with the phone camera (opens Steady and pairs), or paste the sync key under *I have a sync key*.
-
-The token never leaves the device except to talk to `api.github.com`. It's stored only in that device's IndexedDB.
-
-## Run locally
-
-```bash
-python3 -m http.server 8765        # then open http://localhost:8765/
-npm test                           # unit tests (Node 20+)
-bash tests/setup.sh                # one-time: Playwright, axe-core, Lighthouse
-bash tests/run_all.sh              # full end-to-end suite
+```
+linkedin 20 min at 6pm            → "Linkedin", today 6 PM, 20 min, reminder
+remind me to pay rent on the 1st   → "Pay rent", 1st of next month, reminder on
+dentist 25 oct at 4                → 25 Oct, 4 PM (AM/PM picked from your waking hours)
+submit report by eod asap          → today 6 PM, high priority
+stretch in 2 hours                 → a time two hours from now
+deep work 1h30 this afternoon      → 90 min at 3 PM
+post on linkedin                   → linked to the goal whose daily actions include it
 ```
 
-No build step. Plain ES modules, HTML and CSS. See [docs/TESTING.md](docs/TESTING.md).
+Every guess is shown as a chip before you press Enter, so nothing is silently misread.
 
-## Docs
+## Install it as an app
 
-- [PRD](docs/PRD.md) · [Architecture](docs/ARCHITECTURE.md) · [Data model](docs/DATA_MODEL.md) · [Adaptive engine](docs/ADAPTIVE_ENGINE.md)
-- [Testing](docs/TESTING.md) · [Roadmap](docs/ROADMAP.md) · [Porting](docs/PORTING.md) · [V2 agents plan](docs/V2_AGENTS_PLAN.md)
-- [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [License (MIT)](LICENSE)
+- **Android (Chrome):** open the live app → menu **⋮ → Install app** (or **You → Install app** inside Steady). It opens full-screen with no browser bar. If you see a URL bar, it was added as a *shortcut*: remove it and use **Install app** instead.
+- **Windows / macOS (Chrome or Edge):** the install icon in the address bar, or **⋯ → Apps → Install Steady**.
+- **iPhone (Safari):** Share → **Add to Home Screen**.
+
+Updates install themselves: a new version is picked up the next time you open the app.
+
+## Architecture in one picture
+
+```
+ Phone / laptop (PWA)                         Vercel (sin1, Singapore)                 Neon Postgres (sin1)
+ ┌───────────────────────────┐   HTTPS       ┌─────────────────────────────┐   TLS    ┌──────────────────────┐
+ │ UI (vanilla ES modules)   │ ────────────▶ │ /api/* — one Node function  │ ───────▶ │ owners, sessions     │
+ │ IndexedDB (source of truth│  cookie auth  │  auth · sync push/pull/wait │          │ records (RLS per     │
+ │  on the device)           │ ◀──────────── │  reminders · push · tokens  │ ◀─────── │  owner) · reminders  │
+ │ Service worker (offline,  │  long-poll    └─────────────────────────────┘          └──────────────────────┘
+ │  push, notifications)     │                         ▲
+ └───────────────────────────┘                         │ every 5 min (OIDC, no stored secret)
+                                               GitHub Actions: reminders.yml
+```
+
+Full detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · data contract: [docs/DATA_MODEL.md](docs/DATA_MODEL.md) · running it: [docs/OPERATIONS.md](docs/OPERATIONS.md).
+
+## Develop
+
+```bash
+npm install                      # pg + web-push (server only); the app itself has no dependencies
+npm test                         # unit tests (core logic, parser, merge, schema)
+npm run check                    # service-worker precache + import graph sanity
+DATABASE_URL=postgres://… npm run migrate
+DATABASE_URL=postgres://… PORT=8765 npm run dev    # app + API on http://localhost:8765
+```
+
+No bundler, no framework, no transpiler: what's in `js/` is what ships. `npm run build` copies the app into `dist/` and stamps the service-worker cache version with a content hash.
+
+## Project layout
+
+```
+index.html, manifest.webmanifest, sw.js   app shell, install metadata, offline + push worker
+css/app.css                               design tokens (styles live as token overrides) + components
+js/core/        pure logic (parser, adaptive engine, merge, schema) — unit-tested, no DOM
+js/data/        IndexedDB store, sync + live loop, backup, insights binding
+js/platform/    notifications (local, Web Push, ntfy)
+js/ui/          app shell, views, motion system, charts, icons
+api/index.js    Vercel entry → server/routes.js (the whole API)
+server/         auth, db (RLS helper), migrations runner, push sender
+db/migrations/  ordered SQL migrations, applied on every deploy
+.github/        CI (tests) + reminders trigger
+docs/           architecture, data model, operations, testing, roadmap
+```
+
+## License
+
+MIT © Karthik Yernana

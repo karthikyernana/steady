@@ -2,22 +2,96 @@
   "name": "Steady",
   "short_name": "Steady",
   "description": "A calm, adaptive tracker that learns how you work. Tasks, goals, thoughts and patterns. Works offline.",
-  "id": "./",
-  "start_url": "./#/today",
-  "scope": "./",
+  "id": "/",
+  "start_url": "/#/today",
+  "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#FBF8F1",
   "theme_color": "#FBF8F1",
-  "categories": ["productivity", "lifestyle"],
+  "categories": [
+    "productivity",
+    "lifestyle"
+  ],
   "icons": [
-    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
-    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
-    { "src": "icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
-    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
   ],
   "shortcuts": [
-    { "name": "Add a task", "url": "./#/today", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] },
-    { "name": "Evening check-in", "url": "./?checkin=1#/today", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] }
+    {
+      "name": "Add a task",
+      "url": "/#/today",
+      "icons": [
+        {
+          "src": "icons/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "Evening check-in",
+      "url": "/?checkin=1#/today",
+      "icons": [
+        {
+          "src": "icons/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    }
+  ],
+  "display_override": [
+    "standalone",
+    "minimal-ui"
+  ],
+  "launch_handler": {
+    "client_mode": "focus-existing"
+  },
+  "prefer_related_applications": false,
+  "dir": "ltr",
+  "lang": "en-IN",
+  "screenshots": [
+    {
+      "src": "icons/screens/today-narrow.webp",
+      "sizes": "540x1200",
+      "type": "image/webp",
+      "form_factor": "narrow",
+      "label": "Today: your plan, one tap to finish"
+    },
+    {
+      "src": "icons/screens/insights-narrow.webp",
+      "sizes": "540x1200",
+      "type": "image/webp",
+      "form_factor": "narrow",
+      "label": "Insights that learn how you work"
+    },
+    {
+      "src": "icons/screens/goals-wide.webp",
+      "sizes": "1280x800",
+      "type": "image/webp",
+      "form_factor": "wide",
+      "label": "Goals with weekly milestones"
+    }
   ]
 }

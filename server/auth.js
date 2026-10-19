@@ -1,4 +1,4 @@
-// Single-user auth: Google Sign-In (ID token verified against Google's JWKS) and an optional owner passphrase.
+// Accounts: email + password (scrypt), optional Google Sign-In (ID token verified against Google's JWKS).
 // Sessions are random 32-byte tokens in an httpOnly, Secure, SameSite=Lax cookie; only their SHA-256 is stored.
 import { createHash, randomBytes, createPublicKey, createVerify, scryptSync, timingSafeEqual } from 'node:crypto';
 import { query } from './db.js';
@@ -6,7 +6,12 @@ import { query } from './db.js';
 export const COOKIE = 'steady_session';
 const SESSION_DAYS = 90;
 const sha256 = s => createHash('sha256').update(s).digest('hex');
-const allowed = () => (process.env.OWNER_EMAILS || 'karthikyernana@gmail.com').toLowerCase().split(',').map(s => s.trim()).filter(Boolean);
+const owners = () => (process.env.OWNER_EMAILS || '').toLowerCase().split(',').map(s => s.trim()).filter(Boolean);
+// SIGNUP_MODE=open (default): anyone can create an account. SIGNUP_MODE=owners: only OWNER_EMAILS can.
+export const signupMode = () => (process.env.SIGNUP_MODE === 'owners' ? 'owners' : 'open');
+export const mayCreate = email => signupMode() === 'open' || owners().includes(email);
+export const normEmail = e => String(e || '').trim().toLowerCase();
+export const validEmail = e => /^[^\s@]{1,64}@[^\s@]{1,190}\.[a-z]{2,24}$/i.test(e);
 
 export function parseCookies(req) {
   const out = {};
@@ -29,14 +34,31 @@ export async function currentOwner(req) {
   return rows[0] ? { id: rows[0].owner_id, email: rows[0].email } : null;
 }
 
-export async function startSession(res, req, email, device) {
-  email = email.toLowerCase();
-  if (!allowed().includes(email)) throw Object.assign(new Error('This Steady is private.'), { status: 403 });
+export async function findOwner(email) {
+  const { rows } = await query('select id, email, name, password_hash from owners where lower(email) = $1', [normEmail(email)]);
+  return rows[0] || null;
+}
+export async function createOwner(email, password, name) {
   const { rows } = await query(
-    `insert into owners (email) values ($1) on conflict (email) do update set email = excluded.email returning id`, [email]);
+    `insert into owners (email, name, password_hash, password_updated_at) values ($1, $2, $3, now()) returning id, email, name`,
+    [normEmail(email), name || null, hashPassphrase(password)]);
+  return rows[0];
+}
+export async function setPassword(ownerId, password) {
+  await query('update owners set password_hash = $2, password_updated_at = now() where id = $1', [ownerId, hashPassphrase(password)]);
+}
+
+export async function startSession(res, req, email, device) {
+  email = normEmail(email);
+  let o = await findOwner(email);
+  if (!o) {
+    if (!mayCreate(email)) throw Object.assign(new Error('Sign-ups are closed on this Steady.'), { status: 403 });
+    o = (await query('insert into owners (email) values ($1) returning id, email', [email])).rows[0];
+  }
   const tok = randomBytes(32).toString('base64url');
   await query(`insert into sessions (token_hash, owner_id, device, expires_at) values ($1, $2, $3, now() + interval '${SESSION_DAYS} days')`,
-    [sha256(tok), rows[0].id, (device || '').slice(0, 80)]);
+    [sha256(tok), o.id, (device || '').slice(0, 80)]);
+  const rows = [o];
   await query(`delete from sessions where expires_at < now()`);
   res.setHeader('Set-Cookie', cookieHeader(tok, SESSION_DAYS * 86400, req));
   return { id: rows[0].id, email };
@@ -95,7 +117,7 @@ export function hashPassphrase(pass, salt = randomBytes(16)) {
 }
 export function checkPassphrase(pass, stored) {
   const [, saltB64, hashB64] = (stored || '').split('$');
-  if (!saltB64 || !hashB64 || typeof pass !== 'string' || pass.length < 8) return false;
+  if (!saltB64 || !hashB64 || typeof pass !== 'string' || pass.length < 1) return false;
   const want = Buffer.from(hashB64, 'base64');
   const got = scryptSync(pass, Buffer.from(saltB64, 'base64'), want.length, { N: 16384, r: 8, p: 1 });
   return timingSafeEqual(want, got);
@@ -109,3 +131,26 @@ export async function tooManyAttempts(ip) {
 export const logAttempt = (ip, ok) => query('insert into login_attempts (ip, ok) values ($1, $2)', [ip, ok]);
 
 export const hashToken = sha256;
+
+// ---- GitHub Actions OIDC (lets the scheduled reminders workflow call the API without a stored secret) ----
+const ghJwks = { at: 0, keys: [] };
+export async function verifyGithubOidc(jwt) {
+  const parts = String(jwt || '').split('.');
+  if (parts.length !== 3) return false;
+  const [h, p, sig] = parts;
+  let header, claims;
+  try { header = b64json(h); claims = b64json(p); } catch { return false; }
+  if (header.alg !== 'RS256' || claims.iss !== 'https://token.actions.githubusercontent.com') return false;
+  if (Date.now() - ghJwks.at > 3600e3 || !ghJwks.keys.find(k => k.kid === header.kid)) {
+    const r = await fetch('https://token.actions.githubusercontent.com/.well-known/jwks');
+    if (!r.ok) return false;
+    Object.assign(ghJwks, { at: Date.now(), keys: (await r.json()).keys });
+  }
+  const jwk = ghJwks.keys.find(k => k.kid === header.kid); if (!jwk) return false;
+  const v = createVerify('RSA-SHA256'); v.update(`${h}.${p}`);
+  if (!v.verify(createPublicKey({ key: jwk, format: 'jwk' }), Buffer.from(sig, 'base64url'))) return false;
+  const now = Math.floor(Date.now() / 1000);
+  const repo = process.env.CRON_GITHUB_REPO || 'karthikyernana/steady';
+  return claims.aud === 'steady-cron' && claims.repository === repo && claims.exp > now && claims.nbf <= now + 60
+    && String(claims.workflow_ref || '').startsWith(`${repo}/.github/workflows/reminders.yml@`);
+}

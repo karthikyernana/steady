@@ -147,16 +147,21 @@ export function stagger(els, dir = 0, { base = 0, step = 42, max = 9 } = {}) {
     anim(el, [{ opacity: 0, transform: `translate(${dir * 30}px, ${dir ? 6 : 18}px) scale(.985)` }, { opacity: 1, transform: 'none' }], 'gentle', { delay: base + i * step });
   });
 }
-export function routeIn(view, dir) {
-  if (calm()) return;
-  const inner = view.querySelector('.view-inner'); if (!inner) return;
-  stagger(inner.children, dir);
-  const d = inner.querySelector('.page-head .display');
-  anim(d, [{ filter: 'blur(10px)', opacity: 0 }, { filter: 'blur(0px)', opacity: 1 }], 'soft');
-  charts(inner); bars(inner, true);
-  inner.querySelectorAll('.remember-list li, .stat').forEach((li, i) => anim(li, [{ opacity: 0, transform: 'translateY(14px)' }, { opacity: 1, transform: 'none' }], 'gentle', { delay: 140 + i * 50 }));
+// Route change: a single composited cross-slide of the page via the View Transitions API (snapshots, GPU only).
+// Top bar, tab bar and sidebar are captured separately so they stay perfectly still.
+export function routeSwap(swap, dir, after) {
+  if (calm() || !document.startViewTransition) {
+    swap(); after?.();
+    const inner = document.querySelector('.view-inner');
+    if (!calm() && inner) inner.animate([{ transform: `translateX(${dir * 14}px)`, opacity: 0.6 }, { transform: 'none', opacity: 1 }], { duration: 240, easing: 'cubic-bezier(.2,.8,.2,1)' });
+    return;
+  }
+  const html = document.documentElement;
+  html.dataset.vt = dir > 0 ? 'fwd' : dir < 0 ? 'back' : 'fade';
+  const t = document.startViewTransition(swap);
+  t.updateCallbackDone.then(() => after?.()).catch(() => {});
+  t.finished.finally(() => { if (html.dataset.vt !== 'theme') delete html.dataset.vt; });
 }
-
 // ---------- shell intro ----------
 export function shellIn(bootEl, r) {
   if (calm()) return;
@@ -200,7 +205,7 @@ export function bars(root, fresh) {
     fresh ? whenVisible(s, run) : run();
   });
 }
-function charts(root) {
+export function charts(root) {
   root.querySelectorAll('svg.bars').forEach(svg => whenVisible(svg, () =>
     svg.querySelectorAll('rect.bar').forEach((r, i) => anim(r, [{ transform: 'scaleY(0)' }, { transform: 'scaleY(1)' }], 'bouncy', { delay: 60 + i * 26 }))));
   root.querySelectorAll('svg.heatmap').forEach(svg => whenVisible(svg, () =>
@@ -292,17 +297,14 @@ export function popNew(container, prevTexts) {
 const mobile = () => matchMedia('(max-width: 719px)').matches;
 export function sheetIn(wrap) {
   const sheet = wrap.querySelector('.sheet'), bd = wrap.querySelector('.backdrop');
-  document.body.classList.add('sheet-up');
   if (calm()) return;
   bd.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 280, easing: 'ease-out', fill: 'backwards' });
   if (mobile()) anim(sheet, [{ transform: 'translateY(100%)' }, { transform: 'none' }], 'sheet');
   else anim(sheet, [{ opacity: 0, transform: 'translateY(22px) scale(.94)' }, { opacity: 1, transform: 'none' }], { stiffness: 320, damping: 24 });
-  stagger(wrap.querySelector('.sheet-body').children, 0, { base: 60, step: 30, max: 8 });
   if (mobile()) dragToDismiss(wrap);
 }
 export function sheetOut(wrap, done, { velocity = 0 } = {}) {
   const sheet = wrap.querySelector('.sheet'), bd = wrap.querySelector('.backdrop');
-  if (!document.querySelector('.sheet-wrap.open')) document.body.classList.remove('sheet-up');
   if (calm()) return done();
   wrap.style.pointerEvents = 'none';
   const cur = getComputedStyle(sheet).transform; const from = cur === 'none' ? 'none' : cur;
@@ -352,8 +354,6 @@ if (matchMedia('(hover: hover) and (pointer: fine)').matches) {
       raf = 0;
       const c = ev.target.closest?.('.card, .task');
       if (c) { const r = c.getBoundingClientRect(); c.style.setProperty('--mx', `${ev.clientX - r.left}px`); c.style.setProperty('--my', `${ev.clientY - r.top}px`); }
-      const amb = document.querySelector('.ambient');
-      if (amb && !calm()) { amb.style.setProperty('--px', ((ev.clientX / innerWidth) - 0.5).toFixed(3)); amb.style.setProperty('--py', ((ev.clientY / innerHeight) - 0.5).toFixed(3)); }
     });
   }, { passive: true });
 }
@@ -362,7 +362,9 @@ if (matchMedia('(hover: hover) and (pointer: fine)').matches) {
 export function themeSwap(apply, x = innerWidth / 2, y = 80) {
   if (calm() || !document.startViewTransition) return apply();
   const r = Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y));
+  const html = document.documentElement; html.dataset.vt = 'theme';
   const t = document.startViewTransition(apply);
+  t.finished.finally(() => { if (html.dataset.vt === 'theme') delete html.dataset.vt; });
   t.ready.then(() => document.documentElement.animate({ clipPath: [`circle(0px at ${x}px ${y}px)`, `circle(${r}px at ${x}px ${y}px)`] },
     { duration: 640, easing: 'cubic-bezier(.3,.7,.2,1)', pseudoElement: '::view-transition-new(root)' })).catch(() => {});
 }

@@ -63,21 +63,30 @@ export async function signInWithGoogle(credential) {
   const r = await api('POST', 'auth/google', { credential, device: deviceName() });
   await afterSignIn(r.email); return r;
 }
-export async function setupOwner(code, passphrase) {
-  const r = await api('POST', 'auth/setup', { code, passphrase, device: deviceName() });
+export const checkEmail = email => api('POST', 'auth/check', { email });
+export async function signUp(email, password, name) {
+  const r = await api('POST', 'auth/signup', { email, password, name, device: deviceName() });
   await afterSignIn(r.email); return r;
 }
-export async function signInWithPassphrase(passphrase) {
-  const r = await api('POST', 'auth/passphrase', { passphrase, device: deviceName() });
+export async function logIn(email, password) {
+  const r = await api('POST', 'auth/login', { email, password, device: deviceName() });
   await afterSignIn(r.email); return r;
+}
+export const changePassword = (current, password) => api('POST', 'auth/password', { current, password });
+export async function deleteAccount(password) {
+  await api('POST', 'auth/delete', { password });
+  stopLive(); await setLocal('account', null); await setLocal('syncCursor', 0);
+  setStatus({ state: 'off', error: null });
 }
 async function afterSignIn(email) {
   await setLocal('account', { email });
   await markAllDirty();           // anything created before signing in joins the account
   await setLocal('syncCursor', 0);
   await syncNow('sign-in');
+  startLive();
 }
 export async function signOut() {
+  stopLive();
   try { await api('POST', 'auth/logout'); } catch { /* offline: still forget locally */ }
   await setLocal('account', null);
   setStatus({ state: 'off', error: null });
@@ -87,6 +96,7 @@ export async function checkSession() {
   try { const r = await api('GET', 'auth/me'); if (!r.signedIn) await expired(); } catch { /* keep state; retry later */ }
 }
 async function expired() {
+  stopLive();
   await setLocal('account', null);
   setStatus({ state: 'signedout', error: 'Your session ended. Sign in again to keep syncing.' });
 }
@@ -127,7 +137,7 @@ async function doSync() {
     if (pulled) emitExternal();
     const t = Date.now();
     await setLocal('lastSyncedAt', t);
-    setStatus({ state: 'ok', lastSyncedAt: t, error: null, pulled });
+    setStatus({ state: live.on ? 'live' : 'ok', lastSyncedAt: t, error: null, pulled });
     return true;
   } catch (e) {
     if (e.status === 401) { await expired(); return false; }
@@ -165,3 +175,35 @@ export function initStatus() {
 export const createReadToken = label => api('POST', 'tokens', { label });
 export const listReadTokens = () => api('GET', 'tokens');
 export const revokeReadToken = id => api('POST', 'tokens/revoke', { id });
+
+// ---- live sync ----
+// A long-poll loop: the server answers as soon as another device writes (or after ~20 s), then we pull.
+// Runs only while the app is visible and online, so a closed app costs nothing.
+const live = { on: false, ctl: null, backoff: 0 };
+export function startLive() {
+  if (live.on || !cloudReady() || document.hidden || !navigator.onLine) return;
+  live.on = true; live.backoff = 0;
+  loop();
+}
+export function stopLive() { live.on = false; live.ctl?.abort(); live.ctl = null; }
+async function loop() {
+  while (live.on && cloudReady()) {
+    live.ctl = new AbortController();
+    try {
+      const res = await fetch(`${API}sync/wait?since=${local('syncCursor', 0)}`, { credentials: 'same-origin', cache: 'no-store', headers: { 'X-Steady': '1' }, signal: live.ctl.signal });
+      if (res.status === 401) { await expired(); return; }
+      if (!res.ok) throw new Error(res.status);
+      const r = await res.json();
+      live.backoff = 0;
+      if (status.state !== 'syncing' && status.state !== 'live') setStatus({ state: 'live', error: null });
+      if (r.changed) await syncNow('live');
+    } catch (e) {
+      if (!live.on) return;
+      live.backoff = Math.min(30_000, (live.backoff || 2000) * 2);
+      await new Promise(r => setTimeout(r, live.backoff));
+    }
+  }
+}
+document.addEventListener('visibilitychange', () => { if (document.hidden) stopLive(); else if (cloudReady()) { syncNow('focus'); startLive(); } });
+addEventListener('online', () => { if (cloudReady()) { syncNow('online'); startLive(); } });
+addEventListener('offline', () => { stopLive(); setStatus({ state: 'offline' }); });

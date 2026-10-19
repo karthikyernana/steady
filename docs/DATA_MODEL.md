@@ -2,6 +2,10 @@
 
 This is the contract every Steady client (web today, native later, Hark plugin) reads and writes. Source of truth in code: `js/core/schema.js`.
 
+> **v1.2 note:** records are now synced through Steady's own API into Neon Postgres (`records` table, one row per record,
+> last-write-wins by `updatedAt`, global `seq` cursor). See ARCHITECTURE.md → Sync protocol. The record shapes below are
+> unchanged; the GitHub-file sections are kept for history (v1.0) and the export format, which still uses this document shape.
+
 ## Records
 Every record in every collection has:
 

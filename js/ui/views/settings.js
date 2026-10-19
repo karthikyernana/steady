@@ -2,31 +2,32 @@ import { meta, setMeta, local, setLocal, wipeAll } from '../../data/store.js';
 import { esc, randomTopic, ago } from '../../core/util.js';
 import { I } from '../icons.js';
 import { on, toast, openSheet, segmented, bindSeg, toggle, confirmSheet, requestRender } from '../ui.js';
-import { account, serverConfig, syncNow, getStatus, signOut, signInWithGoogle, signInWithPassphrase, setupOwner, pendingCount, createReadToken, listReadTokens, revokeReadToken } from '../../data/sync.js';
+import { account, serverConfig, syncNow, getStatus, signOut, signInWithGoogle, checkEmail, signUp, logIn, changePassword, deleteAccount, pendingCount, createReadToken, listReadTokens, revokeReadToken } from '../../data/sync.js';
 import { permission, requestPermission, showLocal, ntfyPublish, reconcileNtfy, reconcileRemote, ntfyServer, NTFY_DEFAULT, enablePush, disablePush, pushSupported } from '../../platform/notify.js';
 import { downloadExport, importJSON } from '../../data/backup.js';
 
-export const APP_VERSION = '1.0.0';
+export const APP_VERSION = '1.2.0';
 let cfg = local('serverConfig') || null;
 serverConfig().then(c => { const changed = JSON.stringify(c) !== JSON.stringify(cfg); cfg = c; if (changed) requestRender(); }).catch(() => {});
 
 function syncSection() {
   const acct = account(); const st = getStatus();
   if (acct) {
-    const label = st.state === 'error' ? 'Sync needs attention' : st.state === 'syncing' ? 'Syncing…' : st.state === 'offline' ? 'Offline. Changes are saved here and will sync when you are back.' : 'In sync';
+    const label = st.state === 'error' ? 'Sync needs attention' : st.state === 'syncing' ? 'Syncing…' : st.state === 'offline' ? 'Offline. Changes are kept here and sync when you are back.' : st.state === 'live' ? 'Live sync is on' : 'In sync';
     const pend = pendingCount();
     return `<div class="sync-status ${st.state}" data-testid="sync-status"><span class="dot"></span><div><strong>${label}</strong>
         <small>${esc(acct.email)} · last synced ${ago(st.lastSyncedAt || local('lastSyncedAt'))}${pend ? ` · ${pend} change${pend === 1 ? '' : 's'} waiting` : ''}</small>${st.error ? `<small class="err">${esc(st.error)}</small>` : ''}</div></div>
       <div class="row gap wrap"><button class="btn primary sm" data-act="sync-now" data-testid="sync-now">${I.sync}<span>Sync now</span></button>
+        <button class="btn ghost sm" data-act="acct-password">Change password</button>
         <button class="btn ghost sm" data-act="sign-out" data-testid="sign-out">Sign out</button></div>
-      <p class="hint small mt">Sign in with the same account on your phone and laptop. Changes appear on the other device within about 30 seconds, or instantly when you open it.</p>`;
+      <p class="hint small mt">Your account and data live in Steady's own database (Neon Postgres, Singapore). Changes reach your other signed-in devices within a couple of seconds while Steady is open. <button class="link danger-text" data-act="acct-delete">Delete account</button></p>`;
   }
   if (!cfg || !cfg.db) {
-    return `<p class="muted">Cloud sync isn't available here${navigator.onLine ? '' : ' while offline'}. Everything still works on this device, and you can move data with Export and Import below.</p>`;
+    return `<p class="muted">Cloud sync isn't reachable right now${navigator.onLine ? '' : ' (you are offline)'}. Everything still works on this device, and it will sync once you sign in.</p>`;
   }
-  return `<p class="muted">Sign in once on each device to keep your phone and laptop in step. It's private to you: no one else can sign in.</p>
+  return `<p class="muted">Create a free account with your email to back up your data and keep your phone and laptop in step, live.</p>
     ${st.error ? `<p class="err small" role="alert">${esc(st.error)}</p>` : ''}
-    <button class="btn primary sm" data-act="sign-in" data-testid="sign-in">${I.you}<span>Sign in to sync</span></button>`;
+    <button class="btn primary sm" data-act="sign-in" data-testid="sign-in">${I.you}<span>Sign in or create account</span></button>`;
 }
 
 export function renderSettings() {
@@ -73,7 +74,10 @@ export function renderSettings() {
       </div></details>
   </section>
 
-  <section class="card set"><h2 class="card-title">${theme === 'dark' ? I.moon : I.sun}<span>Appearance</span></h2>${segmented('theme', [['system', 'System'], ['light', 'Light'], ['dark', 'Dark']], theme)}</section>
+  <section class="card set"><h2 class="card-title">${theme === 'dark' ? I.moon : I.sun}<span>Appearance</span></h2>
+    <div class="field"><span>Theme</span>${segmented('theme', [['system', 'System'], ['light', 'Light'], ['dark', 'Dark']], theme)}</div>
+    <div class="field mt"><span>Style</span>${segmented('style', [['liquid', 'Liquid glass'], ['paper', 'Paper']], document.documentElement.dataset.style || 'liquid')}
+      <small class="hint">Paper is flat and opaque, and the lightest on older phones.</small></div></section>
 
   <section class="card set" id="sec-hark" data-testid="hark-section"><h2 class="card-title">${I.spark}<span>Hark plugin <small class="pill">optional</small></span></h2>
     <p class="muted">Steady works completely on its own. If you want Hark to coach you from your data, give it a read-only key. It can read, never change anything, and you can revoke it any time.</p>
@@ -110,6 +114,7 @@ export function mountSettings(root) {
     await setMeta('settings', { ntfyServer: v || NTFY_DEFAULT }); await setLocal('ntfySched', {}); reconcileNtfy(); toast('Server saved.');
   });
   bindSeg(root, 'theme', async v => { await setLocal('theme', v); window.__applyTheme(); });
+  bindSeg(root, 'style', v => { try { localStorage.setItem('steady-style', v); } catch { /* private mode */ } window.__applyStyle(v); });
   root.querySelector('#import-file')?.addEventListener('change', async e => {
     const file = e.target.files[0]; if (!file) return;
     try { const n = await importJSON(await file.text()); toast(n ? `Imported ${n} records.` : 'Nothing new in that file.'); window.__markDirty?.(); }
@@ -178,47 +183,101 @@ function loadGis() {
   });
 }
 
+// One sheet, three steps: email → (password | new account) → signed in. Nothing is created until you say so.
 export async function openSignIn(onDone) {
   const c = await serverConfig(true).catch(() => cfg) || {};
   cfg = c;
-  if (!c.db) { toast("Cloud sync isn't available on this host yet."); return; }
+  if (!c.db) { toast(navigator.onLine ? "Steady's server isn't reachable right now. Try again in a moment." : "You're offline. Sign in when you're back online."); return; }
+  let email = '';
   openSheet({
-    title: 'Sign in to sync',
-    body: `<p class="muted">Steady is private to you. Only your account can sign in; anyone else is turned away.</p>
-      ${c.setup ? `<form class="form" id="su" data-testid="setup-form"><p class="hint small">First time on this account: enter the one-time setup code, then choose the passphrase you'll use from now on.</p>
-        <label class="field"><span>Setup code</span><input name="code" autocomplete="one-time-code" spellcheck="false" autocapitalize="off" required data-testid="setup-code" autofocus></label>
-        <label class="field"><span>New passphrase (10+ characters)</span><input type="password" name="pass" autocomplete="new-password" minlength="10" required data-testid="setup-pass"></label>
-        <div class="row end"><button class="btn primary" type="submit" data-testid="setup-go">Set up and sign in</button></div></form>` : ''}
-      ${c.googleClientId ? '<div id="gsi-btn" class="gsi-slot" data-testid="google-btn"><p class="hint small">Loading Google sign-in…</p></div>' : ''}
-      ${c.passphrase ? `<form class="form" id="pp"><label class="field"><span>${c.googleClientId ? 'Or use your owner passphrase' : 'Owner passphrase'}</span>
-        <input type="password" name="pass" autocomplete="current-password" minlength="8" required data-testid="passphrase" ${c.googleClientId ? '' : 'autofocus'}></label>
-        <div class="row end"><button class="btn primary" type="submit" data-testid="passphrase-go">Sign in</button></div></form>` : ''}
-      ${!c.googleClientId && !c.passphrase && !c.setup ? '<p class="err small">No sign-in method is configured on the server yet.</p>' : ''}
-      <p class="err small" id="si-err" role="alert"></p>`,
+    title: 'Your Steady account',
+    body: `<div id="si-step"></div><p class="err small" id="si-err" role="alert" aria-live="polite"></p>
+      ${c.googleClientId ? '<div class="or"><span>or</span></div><div id="gsi-btn" class="gsi-slot" data-testid="google-btn"></div>' : ''}`,
     onMount: (b, sheet) => {
-      const err = m => { b.querySelector('#si-err').textContent = m; };
-      const done = () => { sheet.close(); toast("Signed in. You're in sync."); enablePush().catch(() => {}); requestRender(); onDone?.(); };
-      b.querySelector('#su')?.addEventListener('submit', async e => {
-        e.preventDefault(); err('');
-        const btn = e.target.querySelector('[type=submit]'); btn.disabled = true; btn.textContent = 'Setting up…';
-        try { await setupOwner(e.target.code.value, e.target.pass.value); done(); }
-        catch (x) { err(x.message); btn.disabled = false; btn.textContent = 'Set up and sign in'; }
-      });
-      b.querySelector('#pp')?.addEventListener('submit', async e => {
-        e.preventDefault(); err('');
-        const btn = e.target.querySelector('[type=submit]'); btn.disabled = true; btn.textContent = 'Signing in…';
-        try { await signInWithPassphrase(e.target.pass.value); done(); }
-        catch (x) { err(x.message); btn.disabled = false; btn.textContent = 'Sign in'; }
-      });
+      const step = b.querySelector('#si-step');
+      const err = m => { b.querySelector('#si-err').textContent = m || ''; };
+      const done = created => { sheet.close(); toast(created ? 'Account created. Live sync is on.' : 'Signed in. Live sync is on.'); enablePush().catch(() => {}); requestRender(); onDone?.(); };
+      const busy = (btn, on, label) => { btn.disabled = on; btn.querySelector('span').textContent = label; };
+      const showEmail = () => {
+        step.innerHTML = `<form class="form" id="si-email" novalidate><p class="muted">Sign in, or create a free account. Your data stays on this device too.</p>
+          <label class="field"><span>Email</span><input type="email" name="email" value="${esc(email)}" autocomplete="username email" inputmode="email" autocapitalize="off" spellcheck="false" required data-testid="si-email" autofocus></label>
+          <div class="row end"><button class="btn primary" type="submit" data-testid="si-continue"><span>Continue</span></button></div></form>`;
+        const f = step.querySelector('form');
+        f.addEventListener('submit', async e => {
+          e.preventDefault(); err('');
+          email = f.email.value.trim().toLowerCase();
+          if (!/^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(email)) { err('Enter a valid email address.'); f.email.focus(); return; }
+          const btn = f.querySelector('[type=submit]'); busy(btn, true, 'Checking…');
+          try { const r = await checkEmail(email); r.exists ? showPassword() : r.canCreate ? showCreate() : err('Sign-ups are closed on this Steady.'); }
+          catch (x) { err(x.message); } finally { if (btn.isConnected) busy(btn, false, 'Continue'); }
+        });
+        f.email.focus();
+      };
+      const back = `<button type="button" class="btn ghost sm" data-back>Use another email</button>`;
+      const showPassword = () => {
+        step.innerHTML = `<form class="form" id="si-login"><p class="muted">Welcome back. Enter the password for <strong>${esc(email)}</strong>.</p>
+          <input type="email" name="email" value="${esc(email)}" autocomplete="username" hidden>
+          <label class="field"><span>Password</span><input type="password" name="password" autocomplete="current-password" required data-testid="si-password"></label>
+          <div class="row between">${back}<button class="btn primary" type="submit" data-testid="si-login"><span>Sign in</span></button></div></form>`;
+        wire(step.querySelector('form'), async f => { await logIn(email, f.password.value); done(false); }, 'Signing in…', 'Sign in');
+      };
+      const showCreate = () => {
+        step.innerHTML = `<form class="form" id="si-create"><p class="muted">No account for <strong>${esc(email)}</strong> yet. Create one?</p>
+          <input type="email" name="email" value="${esc(email)}" autocomplete="username" hidden>
+          <label class="field"><span>Choose a password <small class="muted">(8+ characters)</small></span><input type="password" name="password" autocomplete="new-password" minlength="8" required data-testid="si-new-password"></label>
+          <label class="field"><span>Repeat password</span><input type="password" name="confirm" autocomplete="new-password" minlength="8" required data-testid="si-confirm"></label>
+          <div class="row between">${back}<button class="btn primary" type="submit" data-testid="si-create"><span>Create account</span></button></div></form>`;
+        wire(step.querySelector('form'), async f => {
+          if (f.password.value.length < 8) throw new Error('Use at least 8 characters for your password.');
+          if (f.password.value !== f.confirm.value) throw new Error("The two passwords don't match.");
+          await signUp(email, f.password.value, meta('profile').name); done(true);
+        }, 'Creating…', 'Create account');
+      };
+      const wire = (f, fn, during, label) => {
+        f.querySelector('[data-back]').onclick = () => { err(''); showEmail(); };
+        f.querySelector('input[type=password]').focus();
+        f.addEventListener('submit', async e => {
+          e.preventDefault(); err('');
+          const btn = f.querySelector('[type=submit]'); busy(btn, true, during);
+          try { await fn(f); } catch (x) { err(x.message); if (btn.isConnected) busy(btn, false, label); }
+        });
+      };
+      showEmail();
       if (c.googleClientId) loadGis().then(() => {
         const slot = b.querySelector('#gsi-btn'); if (!slot) return;
-        slot.innerHTML = '';
         window.google.accounts.id.initialize({
           client_id: c.googleClientId, auto_select: false, use_fedcm_for_prompt: true,
-          callback: async resp => { err(''); try { await signInWithGoogle(resp.credential); done(); } catch (x) { err(x.message); } },
+          callback: async resp => { err(''); try { await signInWithGoogle(resp.credential); done(false); } catch (x) { err(x.message); } },
         });
         window.google.accounts.id.renderButton(slot, { theme: document.documentElement.dataset.theme === 'dark' ? 'filled_black' : 'outline', size: 'large', shape: 'pill', text: 'continue_with', width: Math.min(320, slot.clientWidth || 320) });
-      }).catch(x => err(x.message));
+      }).catch(() => {});
     },
   });
 }
+
+on('acct-password', () => openSheet({
+  title: 'Change password',
+  body: `<form class="form" id="cp"><input type="email" value="${esc(account()?.email || '')}" autocomplete="username" hidden>
+    <label class="field"><span>Current password</span><input type="password" name="current" autocomplete="current-password" required></label>
+    <label class="field"><span>New password <small class="muted">(8+ characters)</small></span><input type="password" name="next" autocomplete="new-password" minlength="8" required></label>
+    <p class="err small" id="cp-err" role="alert"></p>
+    <div class="row end"><button class="btn primary" type="submit">Save</button></div></form>`,
+  onMount: (b, sheet) => b.querySelector('#cp').addEventListener('submit', async e => {
+    e.preventDefault();
+    try { await changePassword(e.target.current.value, e.target.next.value); sheet.close(); toast('Password changed.'); }
+    catch (x) { b.querySelector('#cp-err').textContent = x.message; }
+  }),
+}));
+on('acct-delete', () => openSheet({
+  title: 'Delete account',
+  body: `<form class="form" id="da"><p class="muted">This permanently deletes your account and everything synced to Steady's server. This device keeps its own copy.</p>
+    <input type="email" value="${esc(account()?.email || '')}" autocomplete="username" hidden>
+    <label class="field"><span>Password</span><input type="password" name="password" autocomplete="current-password" required></label>
+    <p class="err small" id="da-err" role="alert"></p>
+    <div class="row end"><button class="btn danger" type="submit">Delete forever</button></div></form>`,
+  onMount: (b, sheet) => b.querySelector('#da').addEventListener('submit', async e => {
+    e.preventDefault();
+    try { await deleteAccount(e.target.password.value); sheet.close(); toast('Account deleted. Your data is still on this device.'); requestRender(); }
+    catch (x) { b.querySelector('#da-err').textContent = x.message; }
+  }),
+}));

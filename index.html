@@ -21,7 +21,8 @@
     // set theme before first paint (mirrors the device setting kept in IndexedDB)
     (function () { try { var t = localStorage.getItem('steady-theme') || 'system';
       var dark = t === 'dark' || (t === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
-      document.documentElement.dataset.theme = dark ? 'dark' : 'light'; } catch (e) {} })();
+      document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+      document.documentElement.dataset.style = localStorage.getItem('steady-style') || 'liquid'; } catch (e) {} })();
   </script>
 </head>
 <body>

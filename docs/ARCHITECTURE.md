@@ -1,94 +1,64 @@
 # Architecture
 
-Steady is a static, dependency-free PWA: plain ES modules, HTML and CSS, served from any static host (GitHub Pages today). There is no build step and no backend.
+Steady is a local-first PWA with a small server. The device is always the source of truth for what you see; the server
+(Vercel function + Neon Postgres) is the account, the backup, and the bridge between your devices.
 
-## Layers
-
-```mermaid
-flowchart TB
-  subgraph UI["UI (js/ui)"]
-    app[app.js<br/>composition root, router, shell]
-    views[views/*<br/>today · goals · thoughts · insights · settings · onboarding]
-    kit[ui.js · charts.js · icons.js]
-  end
-  subgraph Core["Core (js/core) — pure, portable, unit-tested"]
-    schema[schema.js<br/>data contract + migrations]
-    merge[merge.js<br/>per-record LWW + tombstones]
-    engine[engine.js<br/>adaptive rules]
-    voice[voice.js<br/>state-aware copy]
-    parse[parse.js<br/>quick-add language]
-    util[util.js]
-  end
-  subgraph Data["Data (js/data)"]
-    store[store.js<br/>IndexedDB + in-memory state]
-    sync[sync.js<br/>GitHub contents API]
-    backup[backup.js<br/>export / import]
-    insights[insights.js<br/>engine ⇄ store binding]
-  end
-  subgraph Platform["Platform (js/platform)"]
-    notify[notify.js<br/>SW notifications + ntfy]
-  end
-  sw[sw.js<br/>offline cache, notification clicks]
-
-  app --> views --> kit
-  views --> insights --> engine
-  views --> parse & voice
-  views --> store & sync & notify & backup
-  sync --> merge & schema
-  backup --> merge & schema
-  store --> schema
-  app -.registers.-> sw
 ```
+ Device (PWA)                                    Vercel · sin1                      Neon Postgres · sin1
+ ┌─────────────────────────────┐   HTTPS         ┌───────────────────────────┐      ┌───────────────────────┐
+ │ js/ui      views, motion    │  cookie session │ api/index.js              │ TLS  │ owners  (email, scrypt│
+ │ js/core    pure logic       │ ──────────────▶ │  → server/routes.js       │ ───▶ │          password)    │
+ │ js/data    IndexedDB, sync  │                 │    auth · sync · push ·   │      │ sessions (sha256 only)│
+ │ js/platform notifications   │ ◀── long-poll ─ │    reminders · tokens     │ ◀─── │ records  (RLS/owner)  │
+ │ sw.js      offline + push   │                 └───────────────────────────┘      │ push_subscriptions,   │
+ └─────────────────────────────┘                          ▲                         │ scheduled_notifications│
+                                                          │ every 5 min, GitHub OIDC └───────────────────────┘
+                                                  .github/workflows/reminders.yml
+```
+
+## Layers (client)
 
 | Module | Responsibility | May depend on |
 | --- | --- | --- |
-| `core/*` | Data contract, merge, adaptive rules, copy, parsing. Pure functions only. | `core/*` |
-| `data/store.js` | IndexedDB persistence, in-memory cache, change events, local migrations. | `core/schema` |
-| `data/sync.js` | Read/merge/write `data/state.json` with sha concurrency; pairing keys; Hark snapshot. | `store`, `core/merge`, `core/schema` |
-| `data/backup.js` | Export/import JSON through the same merge rules. | `store`, `sync`, `core/schema` |
-| `data/insights.js` | Feeds live store data into the pure engine. | `store`, `core/engine` |
-| `platform/notify.js` | Notification permission, SW notifications, ntfy schedule reconciliation. | `store` |
-| `ui/*` | Rendering and interaction. | everything above |
+| `js/core/*` | Data contract + migrations (`schema`), per-record merge (`merge`), adaptive rules (`engine`), copy (`voice`), quick-add language (`parse`), helpers. Pure functions, unit-tested, no DOM. | `core/*` |
+| `js/data/store.js` | IndexedDB persistence, in-memory cache, change events. | `core/schema` |
+| `js/data/sync.js` | Account calls, dirty queue, push/pull by server cursor, live long-poll loop. | `store`, `core/*` |
+| `js/data/backup.js` | Export/import through the same merge rules. | `store`, `core` |
+| `js/platform/notify.js` | Permission, local notifications, Web Push subscription, server reminder queue, ntfy backup. | `store`, `sync` |
+| `js/ui/*` | `app.js` (shell, router, render loop), `views/*`, `ui.js` (sheets, toasts, segmented), `motion.js` (springs, FLIP, view transitions, indicators), `charts.js`, `icons.js`. | everything above |
 
-A native port replaces `data/store.js`, `platform/notify.js` and `ui/*`; `core/*` and the on-repo JSON format carry over unchanged (see PORTING.md).
+## Render loop
 
-## Data flow: a change
+Every data change emits an event → `scheduleRender()` (one per frame) → the current view's `render()` returns HTML →
+`motion.flip()` animates what moved, entered or left (keys: `data-id` / `data-k`). Route changes use the View
+Transitions API (one composited cross-slide; bars stay still). A micro-interaction may `motion.hold(ms)` the next
+render so it can finish (e.g. the check burst before a done task leaves the list).
 
-```mermaid
-sequenceDiagram
-  participant U as Karthik
-  participant V as View
-  participant S as store.js
-  participant N as notify.js
-  participant Y as sync.js
-  participant G as GitHub repo
-  U->>V: "linkedin 20 min at 6pm" ⏎
-  V->>V: parseQuick()
-  V->>S: save('tasks', rec) (stamps updatedAt)
-  S-->>V: change event → re-render
-  V->>N: reconcileNtfy() → POST ntfy.sh/topic/st-id (At: ts)
-  S-->>Y: debounced 2.5 s → syncNow()
-  Y->>G: GET data/state.json (sha)
-  Y->>Y: merge(local, remote) per record
-  Y->>G: PUT state.json {sha} (409 → re-fetch, re-merge, retry ×4)
-```
+## Sync protocol
 
-## Sync triggers
-App open · window focus / visibility (if last sync > 20 s) · `online` event · 2.5 s after any local change · every 4 min while visible · *Sync now*.
+1. Local write → record gets `updatedAt` → queued as dirty → pushed after 600 ms (`POST /api/sync/push`, batches ≤ 500).
+2. Server upserts last-write-wins per `(owner, coll, id)` and bumps a global `seq`.
+3. Each open device holds `GET /api/sync/wait?since=<cursor>` (≤ 20 s). The moment another device writes, it returns
+   `changed` and the device pulls `GET /api/sync/pull?since=<cursor>` and merges (newer `updatedAt` wins; ties keep the server copy).
+4. Offline: writes keep queueing; on reconnect the device pushes, then pulls. Deletes are tombstones.
 
-## Offline
-`sw.js` precaches the full shell (HTML, CSS, every module, fonts, icons) and serves it stale-while-revalidate; navigations fall back to cached `index.html`. Network calls to GitHub and ntfy are never cached. Bump `VERSION` in `sw.js` on each release.
+Postgres enforces isolation with forced row-level security: every query runs inside `withOwner()`, which sets
+`app.owner_id` for the transaction.
 
-## Security & privacy
-- Tokens are stored only in the device's IndexedDB (`local` store), never synced, never logged. The pairing key contains the token by design; the UI says so.
-- ntfy topics are long random strings (`steady-` + 18 chars of a 32-symbol alphabet ≈ 90 bits).
-- No analytics, no third-party scripts, no CDN at runtime.
+## Auth
 
-## Key decisions
-| Decision | Why |
-| --- | --- |
-| No framework, no build | Fast, durable, nothing to rot; trivially hostable; easy to read years later. |
-| GitHub repo as sync backend | Free, private, versioned history (every sync is a commit), owned by Karthik, readable by any future client or plugin. |
-| Per-record LWW over CRDTs | Single user, few concurrent edits; deterministic and easy to port. |
-| Rule-based engine | Explainable, offline, zero cost; AI is a later optional layer (V2_AGENTS_PLAN.md). |
-| ntfy for background reminders | Web push needs a server; ntfy's scheduled delivery gives reliable Android alerts with none. |
+Email + password (scrypt N=16384, per-user salt). Sessions are random 32-byte tokens in an httpOnly, Secure, SameSite=Lax
+cookie; only their SHA-256 is stored. State-changing calls require the `X-Steady: 1` header and a same-origin `Origin`
+(CSRF). Failed logins are rate-limited per IP (5/hour) and globally (20/hour). Sign-up policy: `SIGNUP_MODE=open`
+(default) or `owners` (only `OWNER_EMAILS`). Google Sign-In is supported when `GOOGLE_CLIENT_ID` is set.
+
+## Offline + updates
+
+`sw.js` precaches the shell; requests are network-first with a 2.5 s timeout and fall back to cache, so a new deploy is
+live on the next open while offline still works. When a new worker takes over, the page reloads once.
+
+## Design system
+
+`css/app.css` is token-driven. A *style* is only a set of token overrides on `html[data-style=…]` (`liquid`, `paper`),
+so a new look is added without touching components. Motion uses real spring physics compiled to CSS `linear()` easings
+(`motion.installCssSprings`). Everything respects `prefers-reduced-motion` and `prefers-reduced-transparency`.

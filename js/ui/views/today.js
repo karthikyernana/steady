@@ -73,7 +73,7 @@ export function renderToday() {
 
   <form class="composer card" id="composer" autocomplete="off">
     <span class="composer-plus">${I.plus}</span>
-    <input id="qa" data-keep name="qa" placeholder="Try “linkedin 20 min at 6pm”" aria-label="Add a task" enterkeyhint="done">
+    <input id="qa" data-keep name="qa" placeholder="Add a task… e.g. gym 7pm 45m" aria-label="Add a task" enterkeyhint="done">
     <button class="btn primary sm" type="submit" id="qa-add">Add</button>
     <div class="chips" id="qa-chips" aria-live="polite"></div>
   </form>`;
@@ -190,7 +190,7 @@ export function mountToday(root) {
   const chips = root.querySelector('#qa-chips');
   if (!input) return;
   const p = profile();
-  const opts = () => ({ wake: p.wake || '07:00', sleep: p.sleep || '23:30', defaultReminder: settings().defaultReminder !== false });
+  const opts = () => ({ wake: p.wake || '07:00', sleep: p.sleep || '23:30', defaultReminder: settings().defaultReminder !== false, goals: all('goals') });
   const preview = () => {
     const v = input.value.trim();
     if (!v) { chips.innerHTML = ''; chips.classList.remove('show'); return; }
@@ -214,7 +214,7 @@ export function mountToday(root) {
     const v = input.value.trim(); if (!v) { input.focus(); return; }
     const r = parseQuick(v, opts());
     input.value = ''; preview();
-    await addTask({ title: r.title, priority: r.priority, dueDate: r.dueDate, dueTime: r.dueTime, durationMin: r.durationMin, reminder: r.reminder });
+    await addTask({ title: r.title, priority: r.priority, dueDate: r.dueDate, dueTime: r.dueTime, durationMin: r.durationMin, reminder: r.reminder, goalId: r.goalId });
     toast(r.dueDate === todayKey() ? 'Added to today.' : `Added for ${fmtDateKey(r.dueDate)}.`);
     if (r.reminder && permission() === 'default' && !local('notifAsked')) setTimeout(() => window.__askNotifications?.(), 400);
     setTimeout(() => document.getElementById('qa')?.focus(), 30);

@@ -1,8 +1,12 @@
+# Every ~5 minutes, asks Steady's API to send any due reminders as Web Push.
+# Auth: a short-lived GitHub OIDC token (no stored secret). The API only accepts tokens minted for this repo's workflow.
 name: reminders
 on:
   schedule:
     - cron: "*/5 * * * *"
   workflow_dispatch:
+permissions:
+  id-token: write
 jobs:
   ping:
     runs-on: ubuntu-latest
@@ -10,5 +14,6 @@ jobs:
     steps:
       - name: Trigger due reminders
         run: |
-          curl -fsS -X POST "https://steady-swart-mu.vercel.app/api/cron/reminders" \
-            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
+          set -euo pipefail
+          TOKEN=$(curl -fsS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=steady-cron" | jq -r .value)
+          curl -fsS -X POST "https://steady-swart-mu.vercel.app/api/cron/reminders" -H "Authorization: Bearer $TOKEN"
