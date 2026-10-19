@@ -7,10 +7,10 @@
 const env = k => process.env[k] || '';
 export const qstashReady = () => !!(env('QSTASH_TOKEN') && env('PUBLIC_URL') && env('CRON_SECRET').length >= 16);
 
-// One message per distinct fire minute: several reminders due at 18:00 share a single wake-up (dedup id).
+// One message per distinct fire second: several reminders due at 18:00:00 share a single wake-up (dedup id).
 export async function scheduleExact(fireAts, { now = Date.now() } = {}) {
   if (!qstashReady()) return { scheduled: 0, skipped: 'not configured' };
-  const minutes = [...new Set(fireAts.filter(t => Number.isFinite(t) && t > now + 5_000 && t < now + 7 * 864e5).map(t => Math.floor(t / 60e3)))];
+  const minutes = [...new Set(fireAts.filter(t => Number.isFinite(t) && t > now + 5_000 && t < now + 7 * 864e5).map(t => Math.floor(t / 1000)))];   // exact second (reminders sharing a second share one wake-up)
   const base = (env('QSTASH_URL') || 'https://qstash.upstash.io').replace(/\/+$/, '');
   const dest = `${env('PUBLIC_URL').replace(/\/+$/, '')}/api/cron/reminders`;
   let scheduled = 0; const errors = [];
@@ -18,7 +18,7 @@ export async function scheduleExact(fireAts, { now = Date.now() } = {}) {
     try {
       const res = await fetch(`${base}/v2/publish/${dest}`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${env('QSTASH_TOKEN')}`, 'Content-Type': 'application/json', 'Upstash-Not-Before': String(m * 60),
+        headers: { Authorization: `Bearer ${env('QSTASH_TOKEN')}`, 'Content-Type': 'application/json', 'Upstash-Not-Before': String(m),
           'Upstash-Deduplication-Id': `steady-${m}`, 'Upstash-Retries': '2', 'Upstash-Forward-Authorization': `Bearer ${env('CRON_SECRET')}` },
         body: '{}', signal: AbortSignal.timeout(5000) });
       if (res.ok) scheduled++; else errors.push(res.status);
