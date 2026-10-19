@@ -5,6 +5,7 @@
 //         rules: deterministic on-server planner (js/core/agent.js)                no key                 (last resort)
 // Whatever the provider returns goes through validatePlan(); nothing is written to the user's data here.
 import { query, withOwner } from './db.js';
+import { TAG_SCHEMA, TAG_SYSTEM, buildTagPrompt, validateTags, ruleTag, REFLECT_SCHEMA, REFLECT_SYSTEM } from '../js/core/journal.js';
 import { RESPONSE_SCHEMA, compactContext, buildPrompt, validatePlan, rulesPlan, learn, emptyMemory, zonedNow, MAX_TEXT } from '../js/core/agent.js';
 
 const env = k => process.env[k] || '';
@@ -121,17 +122,17 @@ export function salvageActions(t) {
   return out.length ? { language: 'other', clarification: null, actions: out } : null;
 }
 
-async function gemini(system, user, { thinking = env('GEMINI_THINKING') || 'low' } = {}) {
+async function gemini(system, user, { thinking = env('GEMINI_THINKING') || 'low', schema = RESPONSE_SCHEMA, temperature = 0.2 } = {}) {
   const body = {
     systemInstruction: { parts: [{ text: system }] },
     contents: [{ role: 'user', parts: [{ text: user }] }],
-    generationConfig: { temperature: 0.2, maxOutputTokens: 4096, responseMimeType: 'application/json', responseJsonSchema: geminiSchema(RESPONSE_SCHEMA),
+    generationConfig: { temperature, maxOutputTokens: 4096, responseMimeType: 'application/json', responseJsonSchema: geminiSchema(schema),
       ...(thinking && thinking !== 'off' ? { thinkingConfig: { thinkingLevel: thinking } } : {}) },
   };
   const res = await fetch(`${GEMINI()}/v1beta/models/${encodeURIComponent(GEMINI_MODEL())}:generateContent`, {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env('GEMINI_API_KEY') }, body: JSON.stringify(body), signal: AbortSignal.timeout(20_000) });
   const j = await res.json().catch(() => ({}));
-  if (res.status === 400 && thinking !== 'off' && /thinking/i.test(JSON.stringify(j))) return gemini(system, user, { thinking: 'off' }); // model without thinking levels
+  if (res.status === 400 && thinking !== 'off' && /thinking/i.test(JSON.stringify(j))) return gemini(system, user, { thinking: 'off', schema, temperature }); // model without thinking levels
   if (!res.ok) throw new AgentError(502, `gemini ${res.status}: ${String(j.error?.message || '').slice(0, 160)}`);
   const parts = j.candidates?.[0]?.content?.parts || [];
   const text = parts.filter(p => !p.thought && typeof p.text === 'string').map(p => p.text).join('');
@@ -238,6 +239,39 @@ export async function learnFrom(ownerId, pairs) {
   const m = learn(await getMemory(ownerId), pairs);
   await saveMemory(ownerId, m);
   return memorySummary(m);
+}
+
+// ---------------------------------------------------------------- journal (Today): file entries, reflect on the fortnight
+// Tag: entries in, understanding out (areas, facts, mood, people). Nothing is written here; the browser stores jx on the entry.
+export async function tagEntries({ entries, labels }) {
+  const list = (Array.isArray(entries) ? entries : []).slice(0, 12).map(e => ({ id: String(e?.id || '').slice(0, 40), text: String(e?.text || '').slice(0, 1500) })).filter(e => e.id && e.text.trim());
+  if (!list.length) throw new AgentError(400, 'Nothing to read.');
+  const ids = list.map(e => e.id);
+  if (env('GEMINI_API_KEY')) {
+    try { return { tags: validateTags(await gemini(TAG_SYSTEM, buildTagPrompt(list, Array.isArray(labels) ? labels.map(String) : []), { schema: TAG_SCHEMA, thinking: 'off' }), ids, 'gemini'), provider: 'gemini' }; }
+    catch (e) { console.warn('[journal tag]', e.message); }
+  }
+  if (env('SARVAM_API_KEY') && env('AGENT_SARVAM_LLM') !== 'off') {
+    try { return { tags: validateTags(await sarvam(`${TAG_SYSTEM}\nReply with one JSON object: {"entries":[{"id":"…","title":"…","areas":["…"],"facts":[{"area":"…","label":"…","value":2,"unit":"…"}],"mood":null,"people":[]}]}`, buildTagPrompt(list, Array.isArray(labels) ? labels.map(String) : [])), ids, 'sarvam'), provider: 'sarvam' }; }
+    catch (e) { console.warn('[journal tag sarvam]', e.message); }
+  }
+  return { tags: Object.fromEntries(list.map(e => [e.id, ruleTag(e.text)])), provider: 'rules' };
+}
+// Reflect: the browser computes every number (js/core/journal.js) and sends a compact digest; the model picks the views and
+// writes the words. The browser validates the reply against its own stats before showing anything.
+export async function reflectOn({ digest }) {
+  const d = String(digest || '').slice(0, 9000);
+  if (!d.trim()) throw new AgentError(400, 'Nothing to reflect on.');
+  const errors = [];
+  if (env('GEMINI_API_KEY')) {
+    try { return { raw: await gemini(REFLECT_SYSTEM, d, { schema: REFLECT_SCHEMA, temperature: 0.5 }), provider: 'gemini' }; }
+    catch (e) { errors.push(e.message); console.warn('[journal reflect]', e.message); }
+  }
+  if (env('SARVAM_API_KEY') && env('AGENT_SARVAM_LLM') !== 'off') {
+    try { return { raw: await sarvam(`${REFLECT_SYSTEM}\nReply with one JSON object: {"headline":"…","prompt":"…" or null,"cards":[{"kind":"balance|metric|streak|mood|theme|echo|money","area":null,"metric":null,"title":"…","text":"…"}]}`, d), provider: 'sarvam' }; }
+    catch (e) { errors.push(e.message); console.warn('[journal reflect sarvam]', e.message); }
+  }
+  throw new AgentError(errors.length ? 502 : 501, errors.length ? 'The journal could not reflect right now.' : 'No model configured.');
 }
 
 export { AgentError };

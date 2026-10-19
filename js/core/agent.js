@@ -120,7 +120,7 @@ Action types:
 - progress: he made progress on a GOAL (worked on it, finished a milestone, did one of its daily actions). target = goal ref; milestone = milestone ref if he finished that milestone (then mark_milestone_done=true); title = short description of what he did.
 - goal: a new goal ("my goal is…", "I want to … by …"). title, date = target date if given, milestones = short weekly steps if he listed any, note = why.
 - money: an expense or income in INR. amount is a number in rupees ("five hundred" / "ఐదు వందలు" / "aidu vandalu" = 500, "2.5k" = 2500, "1.5 lakh" = 150000). money_kind expense|income. category: reuse one of money.categories or the learned list when it fits, else a short English noun (Food, Transport, Groceries, Bills, Shopping, Education, Health, Entertainment, Family, Rent, Salary, Freelance, Stipend). payee if he named a shop/app/person. note = 2-5 words. date = the day it happened.
-- thought: an idea, note, feeling or journal line. note = the text in his words (keep Telugu as Telugu). thought_kind note|idea|journal, mood 1-5 if he expressed one.
+- thought: an idea, note, feeling or journal line (also anything he did, learned, watched, felt or noticed that is not a task, money or goal progress: thought_kind journal). note = the text in his words (keep Telugu as Telugu). thought_kind note|idea|journal, mood 1-5 if he expressed one.
 
 Rules:
 - One utterance can hold several actions (e.g. "spent 200 on lunch and finished the DSA task" = money + complete). Never merge two different things; never split one thing into two.

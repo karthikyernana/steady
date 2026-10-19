@@ -4,6 +4,16 @@
 //   node tests/mocks/ai-mock.mjs 8791          → standalone (point SARVAM_BASE_URL / GEMINI_BASE_URL at it)
 import { createServer } from 'node:http';
 import { rulesPlan } from '../../js/core/agent.js';
+import { ruleTag } from '../../js/core/journal.js';
+// journal: tag with the rules tagger; reflect with a fixed set of views keyed off the digest
+const journalReply = (system, text) => {
+  if (/file each one/.test(system)) return { entries: [...text.matchAll(/^\[([^\]]+)\] (.*)$/gm)].map(m => ({ id: m[1], ...ruleTag(m[2]) })) };
+  const metric = /Metrics \(id: [^)]*\): ([^:;]+):/.exec(text)?.[1]?.trim();
+  return { headline: 'Learning showed up most this fortnight, and your mood rises on gym days.', prompt: 'What made today’s DSA session click?',
+    cards: [{ kind: 'balance', area: null, metric: null, title: 'Where your days went', text: 'Mostly learning and building.' },
+      ...(metric && metric !== 'none.' ? [{ kind: 'metric', area: 'learning', metric, title: 'Tracked', text: 'Mock metric card.' }] : []),
+      { kind: 'mood', area: null, metric: null, title: 'How you felt', text: 'Mock mood.' }, { kind: 'streak', area: 'learning', metric: null, title: 'Learning streak', text: 'Mock streak.' }] };
+};
 
 export function createMock({ transcript = process.env.MOCK_TRANSCRIPT || 'spent 250 on lunch at swiggy and finished the DSA problems, remind me to call amma tomorrow at 6pm' } = {}) {
   const calls = [];
@@ -32,7 +42,8 @@ export function createMock({ transcript = process.env.MOCK_TRANSCRIPT || 'spent 
       if (!req.headers['x-goog-api-key']) return json(403, { error: { message: 'API key not valid' } });
       if (state.geminiStatus !== 200) return json(state.geminiStatus, { error: { message: 'mock failure' } });
       if (state.thinkingUnsupported && body.generationConfig?.thinkingConfig) return json(400, { error: { message: 'Thinking level is not supported for this model.' } });
-      const out = planFrom(body.contents?.[0]?.parts?.[0]?.text || '');
+      const sys = body.systemInstruction?.parts?.[0]?.text || '', userText = body.contents?.[0]?.parts?.[0]?.text || '';
+      const out = /journal/i.test(sys) && !/capture agent/.test(sys) ? journalReply(sys, userText) : planFrom(userText);
       return json(200, { candidates: [{ content: { role: 'model', parts: [{ text: JSON.stringify(out) }] }, finishReason: 'STOP' }] });
     }
     if (url.pathname === '/v1/chat/completions') {

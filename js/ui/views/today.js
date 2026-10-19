@@ -8,6 +8,7 @@ import { I } from '../icons.js';
 import { on, toast, openSheet, segmented, bindSeg, segValue, toggle, confirmSheet, requestRender } from '../ui.js';
 import { reconcileNtfy, permission } from '../../platform/notify.js';
 import * as motion from '../motion.js';
+import { renderJournal, mountJournal, journalHead } from '../journal-view.js';
 
 const ui = { showDone: false, showLater: false, showRest: false };
 
@@ -59,6 +60,7 @@ export function renderToday() {
   const mvdOn = local('mvdDay') === tk;
   const d = new Date();
 
+  const jr = journalHead().r;
   const sub = todayLine({ now: d, total: todays.length, done: nDone, open: open.length, a, profile: p, checkins: all('checkins'), mvd: mvdOn });
 
   let html = `
@@ -66,11 +68,13 @@ export function renderToday() {
     <div>
       <div class="eyebrow">${DAYS[d.getDay()]}, ${d.getDate()} ${MONTHS[d.getMonth()]}</div>
       <h1 class="display">${greeting(d)}${p.name ? `, <em>${esc(p.name)}</em>` : ''}.</h1>
-      <p class="sub" data-testid="today-sub">${esc(sub)}</p>
+      <p class="sub" data-testid="journal-headline">${esc(jr.headline || sub)}</p>
     </div>
     <div class="head-ring" data-ring="today" title="${nDone} done today">${ring(todays.length ? nDone / Math.max(1, todays.length - done.filter(t => t.status === 'skipped').length) : 0, 56)}<span>${nDone}</span></div>
   </div>
-
+  ${renderJournal(jr)}
+  <div class="sec-head tasks-head" data-k="sh-tasks"><h2>Tasks</h2><span class="count">${open.length ? `${open.length} open` : ''}</span></div>
+  <p class="muted small tasks-sub" data-testid="today-sub">${esc(sub)}</p>
   <form class="composer card" id="composer" autocomplete="off">
     <span class="composer-plus">${I.plus}</span>
     <input id="qa" data-keep name="qa" placeholder="Add a task… e.g. gym 7pm 45m" aria-label="Add a task" enterkeyhint="done">
@@ -144,12 +148,11 @@ export function renderToday() {
       ${rest.length ? `<button class="disclose" data-k="d-rest" data-act="toggle-rest" aria-expanded="${ui.showRest}">Everything else can wait · ${rest.length}</button>${ui.showRest ? `<ul class="tasks dim">${rest.map(t => taskRow(t)).join('')}</ul>` : ''}` : ''}
     </section>`;
   } else if (open.length) {
-    html += `<section class="list-sec"><div class="sec-head" data-k="sh-today"><h2>Today</h2><span class="count">${open.length} open</span></div><ul class="tasks" data-testid="open-list">${open.map(t => taskRow(t)).join('')}</ul></section>`;
+    html += `<section class="list-sec"><ul class="tasks" data-testid="open-list">${open.map(t => taskRow(t)).join('')}</ul></section>`;
   } else if (!todays.length) {
     const acts = all('goals').flatMap(g => (g.actions || []).slice(0, 2).map(x => ({ g, x }))).slice(0, 4);
-    html += `<section class="empty" data-testid="empty-today">
-      <p class="serif big">A clear page.</p>
-      <p class="muted">Add one small thing above.</p>
+    html += `<section class="empty small" data-testid="empty-today">
+      <p class="muted">No tasks today.</p>
       ${acts.length ? `<div class="row gap wrap center">${acts.map(({ g, x }) => `<button class="chip-btn" data-act="add-action" data-goal="${g.id}" data-title="${esc(x.title)}">${I.plus}<span>${esc(x.title)}</span></button>`).join('')}</div>` : ''}
     </section>`;
   } else {
@@ -186,6 +189,7 @@ function taskRow(t, showDate = false) {
 
 // ---------------- composer ----------------
 export function mountToday(root) {
+  mountJournal(root);
   const input = root.querySelector('#qa');
   const chips = root.querySelector('#qa-chips');
   if (!input) return;

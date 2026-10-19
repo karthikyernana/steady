@@ -5,7 +5,7 @@ import { currentOwner, startSession, endSession, verifyGoogleIdToken, checkPassp
 import { migrate } from './migrate.js';
 import { sendDue, vapidReady } from './push.js';
 import { triggerFor, triggerMode } from './trigger.js';
-import { AgentError, agentConfig, countUse, transcribe, plan, learnFrom, getMemory, memorySummary, resetMemory } from './agent.js';
+import { AgentError, agentConfig, countUse, transcribe, plan, learnFrom, getMemory, memorySummary, resetMemory , tagEntries, reflectOn } from './agent.js';
 
 const COLLS = new Set(['tasks', 'goals', 'thoughts', 'checkins', 'meta', 'money']);
 const MAX_BODY = 2_000_000;
@@ -311,6 +311,18 @@ const routes = {
     requireCsrf(req);
     const o = await me(req);
     return { ok: true, memory: await learnFrom(o.id, body.pairs) };
+  },
+  'POST agent/journal/tag': async (req, res, body) => {
+    requireCsrf(req);
+    const o = await me(req);
+    await countUse(o.id, 'plan');
+    return tagEntries(body || {});
+  },
+  'POST agent/journal/reflect': async (req, res, body) => {
+    requireCsrf(req);
+    const o = await me(req);
+    await countUse(o.id, 'plan');
+    return reflectOn(body || {});
   },
   'GET agent/memory': async req => { const o = await me(req); return { memory: memorySummary(await getMemory(o.id)) }; },
   'POST agent/memory/reset': async req => { requireCsrf(req); const o = await me(req); await resetMemory(o.id); return { ok: true }; },

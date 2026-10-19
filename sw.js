@@ -1,5 +1,5 @@
 // Steady service worker: offline app shell (network-first, cache fallback) + Web Push + notification clicks.
-const VERSION = 'steady-v1.3.1';
+const VERSION = 'steady-v1.4.0-journal';
 const SHELL = [
   './',
   './index.html',
@@ -16,6 +16,7 @@ const SHELL = [
   './js/core/text.js',
   './js/core/util.js',
   './js/core/voice.js',
+  './js/core/journal.js', './js/data/journal.js', './js/ui/journal-view.js',
   './js/data/agent.js',
   './js/data/backup.js',
   './js/data/insights.js',
