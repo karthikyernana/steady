@@ -150,17 +150,12 @@ export function stagger(els, dir = 0, { base = 0, step = 42, max = 9 } = {}) {
 // Route change: a single composited cross-slide of the page via the View Transitions API (snapshots, GPU only).
 // Top bar, tab bar and sidebar are captured separately so they stay perfectly still.
 export function routeSwap(swap, dir, after) {
-  if (calm() || !document.startViewTransition) {
-    swap(); after?.();
-    const inner = document.querySelector('.view-inner');
-    if (!calm() && inner) inner.animate([{ transform: `translateX(${dir * 14}px)`, opacity: 0.6 }, { transform: 'none', opacity: 1 }], { duration: 240, easing: 'cubic-bezier(.2,.8,.2,1)' });
-    return;
-  }
-  const html = document.documentElement;
-  html.dataset.vt = dir > 0 ? 'fwd' : dir < 0 ? 'back' : 'fade';
-  const t = document.startViewTransition(swap);
-  t.updateCallbackDone.then(() => after?.()).catch(() => {});
-  t.finished.finally(() => { if (html.dataset.vt !== 'theme') delete html.dataset.vt; });
+  // Route change: swap instantly, then one composited slide of the page content (transform + opacity, never from 0).
+  // Fixed bars (top bar, tab bar) are never snapshotted or moved, so they stay rock-still on every device.
+  swap(); after?.();
+  const inner = document.querySelector('.view-inner');
+  if (calm() || !inner) return;
+  inner.animate([{ transform: `translate3d(${dir * 18}px, 0, 0)`, opacity: 0.5 }, { transform: 'none', opacity: 1 }], { duration: 260, easing: 'cubic-bezier(.2,.8,.2,1)' });
 }
 // ---------- shell intro ----------
 export function shellIn(bootEl, r) {
@@ -237,7 +232,7 @@ function slide(ind, x, y, w, h, animate) {
   const goo = ind.firstElementChild;
   const horiz = Math.abs(prev.x - x) > Math.abs(prev.y - y);
   if (goo) goo.animate(horiz
-    ? [{ transform: 'scale(1)' }, { transform: 'scale(1.22, .86)', offset: 0.3 }, { transform: 'scale(1)' }]
+    ? [{ transform: 'scale(1)' }, { transform: 'scaleX(1.12)', offset: 0.35 }, { transform: 'scale(1)' }]
     : [{ transform: 'scale(1)' }, { transform: 'scale(.94, 1.18)', offset: 0.3 }, { transform: 'scale(1)' }], { duration: 460, easing: 'cubic-bezier(.3,.6,.3,1)' });
 }
 export function indicators(animate) {
@@ -245,7 +240,6 @@ export function indicators(animate) {
     const ind = bar.querySelector('.liquid-ind'); const on = bar.querySelector('.on');
     if (!ind || !on || !on.offsetWidth) continue;
     slide(ind, on.offsetLeft, on.offsetTop, on.offsetWidth, on.offsetHeight, animate);
-    if (animate && !calm()) anim(on.querySelector('svg'), [{ transform: 'scale(.7) translateY(3px)' }, { transform: 'none' }], 'bouncy');
   }
 }
 export function seg(g, animate = true) {

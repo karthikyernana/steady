@@ -3,6 +3,10 @@
 All notable changes to Steady. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 The data contract has its own version (`schemaVersion`, see docs/DATA_MODEL.md); an app release that changes it must ship a migration.
 
+## 1.2.1 — Rock-still tab bar (2026-10-19)
+- Route changes no longer use View Transitions (Android snapshotted the fixed tab bar, so it dipped and popped back). The page content now does one composited slide; the top bar and tab bar never move.
+- Removed the active-tab icon bounce and the vertical squash of the tab indicator; softer press state on tabs.
+
 ## 1.2.0 — Accounts, live sync, speed (2026-10-19)
 - **Accounts:** real email + password accounts (email first, then sign in or an explicit "Create account" step; nothing is created silently). Change password, delete account. Retired the one-time setup code and owner passphrase.
 - **Live sync:** changes push within ~0.6 s; other open devices get them within ~1–2 s through a long-poll (`/api/sync/wait`). Status shows "Live".

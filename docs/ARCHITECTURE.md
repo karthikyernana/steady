@@ -30,8 +30,8 @@ Steady is a local-first PWA with a small server. The device is always the source
 ## Render loop
 
 Every data change emits an event → `scheduleRender()` (one per frame) → the current view's `render()` returns HTML →
-`motion.flip()` animates what moved, entered or left (keys: `data-id` / `data-k`). Route changes use the View
-Transitions API (one composited cross-slide; bars stay still). A micro-interaction may `motion.hold(ms)` the next
+`motion.flip()` animates what moved, entered or left (keys: `data-id` / `data-k`). Route changes swap the view and run one
+composited slide of the page content (no View Transitions, so fixed bars are never snapshotted). A micro-interaction may `motion.hold(ms)` the next
 render so it can finish (e.g. the check burst before a done task leaves the list).
 
 ## Sync protocol

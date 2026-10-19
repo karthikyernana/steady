@@ -105,11 +105,11 @@ code { font-size: .86em; background: var(--surface-2); padding: .1em .35em; bord
 [data-theme="dark"] .liquid-ind i { background: rgba(255,255,255,.08); }
 .tab { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; min-height: 52px; border-radius: 14px;
   color: var(--faint); text-decoration: none; font-size: .72rem; font-weight: 550; letter-spacing: .01em; position: relative; z-index: 1;
-  transition: color .25s, transform var(--dur-bouncy) var(--ease-bouncy); -webkit-tap-highlight-color: transparent; }
+  transition: color .25s, transform .22s cubic-bezier(.2,.8,.2,1); -webkit-tap-highlight-color: transparent; }
 .tab svg { width: 22px; height: 22px; }
 .tab.on { color: var(--ink); }
 .tab.on svg { color: var(--accent); }
-.tab:active { transform: scale(.9); transition-duration: .12s; }
+.tab:active { transform: scale(.96); transition-duration: .1s; }
 
 @media (min-width: 960px) {
   .topbar, .tabbar { display: none; }
@@ -522,18 +522,9 @@ input[type=date], input[type=time] { min-width: 0; }
 }
 
 /* ---------- view transitions ---------- */
-#view { view-transition-name: page; }
-.topbar { view-transition-name: topbar; } .tabbar { view-transition-name: tabbar; } .side { view-transition-name: side; }
-::view-transition-group(*) { animation-duration: .34s; animation-timing-function: cubic-bezier(.2,.8,.2,1); }
+/* View Transitions are used only for the theme/style circular reveal (whole screen). */
 ::view-transition-old(root), ::view-transition-new(root) { animation: none; mix-blend-mode: normal; }
-::view-transition-old(topbar), ::view-transition-new(topbar), ::view-transition-old(tabbar), ::view-transition-new(tabbar), ::view-transition-old(side), ::view-transition-new(side) { animation: none; }
-html[data-vt]::view-transition-old(page) { animation: vt-out .3s cubic-bezier(.4,0,.2,1) both; }
-html[data-vt]::view-transition-new(page) { animation: vt-in .34s cubic-bezier(.2,.8,.2,1) both; }
-html[data-vt="fwd"] { --vt-from: 28px; --vt-to: -18px; } html[data-vt="back"] { --vt-from: -28px; --vt-to: 18px; } html[data-vt="fade"] { --vt-from: 0px; --vt-to: 0px; }
-@keyframes vt-out { to { opacity: .2; transform: translateX(var(--vt-to)); } }
-@keyframes vt-in { from { opacity: 0; transform: translateX(var(--vt-from)); } 45% { opacity: 1; } to { opacity: 1; transform: none; } }
 /* the theme swap reveals the whole screen at once */
-html[data-vt="theme"] #view, html[data-vt="theme"] .topbar, html[data-vt="theme"] .tabbar, html[data-vt="theme"] .side { view-transition-name: none; }
 
 
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
