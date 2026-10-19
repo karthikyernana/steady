@@ -1,5 +1,5 @@
 // Steady service worker: offline app shell (network-first, cache fallback) + Web Push + notification clicks.
-const VERSION = 'steady-v1.3.0';
+const VERSION = 'steady-v1.3.1';
 const SHELL = [
   './',
   './index.html',
@@ -77,21 +77,38 @@ self.addEventListener('fetch', e => {
   e.respondWith(timeout(2500, net).catch(() => caches.match(key, { ignoreSearch: true }).then(c => c || net)));
 });
 
-// Web Push from Steady's server (see server/push.js)
+// Web Push from Steady's server (see server/push.js). Task reminders get Done / Snooze actions.
+const isTaskTag = t => /^task-/.test(t || '');
+const taskOpts = (d) => isTaskTag(d.tag) ? { actions: [{ action: 'done', title: 'Done' }, { action: 'snooze', title: 'Snooze 10 min' }] } : {};
 self.addEventListener('push', e => {
   let d = {};
   try { d = e.data ? e.data.json() : {}; } catch { d = { title: 'Steady', body: e.data && e.data.text() }; }
   e.waitUntil(self.registration.showNotification(d.title || 'Steady', {
     body: d.body || '', tag: d.tag || 'steady', renotify: true, icon: './icons/icon-192.png', badge: './icons/badge-96.png',
-    data: { url: d.url || './#/today' }, timestamp: d.at || Date.now(),
+    data: { url: d.url || './#/today', key: d.key || null, taskId: isTaskTag(d.tag) ? d.tag.slice(5) : null }, timestamp: d.at || Date.now(),
+    vibrate: [180, 80, 180], ...taskOpts(d),
   }));
 });
 
+const openApp = (url, msg) => self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
+  for (const c of list) if (c.url.startsWith(self.registration.scope)) { c.focus(); if (msg) c.postMessage(msg); return; }
+  return self.clients.openWindow(url);
+});
+
 self.addEventListener('notificationclick', e => {
-  e.notification.close();
-  const target = new URL(e.notification.data?.url || './', self.registration.scope).href;
-  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
-    for (const c of list) if (c.url.startsWith(self.registration.scope)) { c.focus(); if (e.notification.tag === 'checkin') c.postMessage({ type: 'open-checkin' }); return; }
-    return self.clients.openWindow(e.notification.tag === 'checkin' ? './?checkin=1' : target);
-  }));
+  const n = e.notification, data = n.data || {};
+  n.close();
+  if (e.action === 'snooze') {
+    const key = data.key || (data.taskId ? `st-${data.taskId}` : null);
+    e.waitUntil(fetch('/api/reminders/snooze', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json', 'X-Steady': '1' }, body: JSON.stringify({ key, minutes: 10 }) })
+      .then(r => { if (!r.ok) throw new Error(r.status); })
+      .catch(() => openApp(`./?snooze=${encodeURIComponent(data.taskId || '')}#/today`, { type: 'task-snooze', id: data.taskId })));
+    return;
+  }
+  if (e.action === 'done' && data.taskId) {
+    e.waitUntil(openApp(`./?done=${encodeURIComponent(data.taskId)}#/today`, { type: 'task-done', id: data.taskId }));
+    return;
+  }
+  const target = new URL(data.url || './', self.registration.scope).href;
+  e.waitUntil(openApp(n.tag === 'checkin' ? './?checkin=1' : target, n.tag === 'checkin' ? { type: 'open-checkin' } : null));
 });

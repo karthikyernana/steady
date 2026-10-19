@@ -18,18 +18,21 @@ export function vapidReady() {
 export async function sendDue(now = new Date()) {
   if (!vapidReady()) throw Object.assign(new Error('VAPID keys are not configured'), { status: 501 });
   const { rows: owners } = await query('select id from owners');
-  const report = { due: 0, sent: 0, failed: 0, pruned: 0 };
+  const report = { due: 0, sent: 0, failed: 0, pruned: 0, nextAt: null };
   for (const o of owners) {
     await withOwner(o.id, async c => {
       const { rows: due } = await c.query(
         `select key, fire_at, title, body, url, tag from scheduled_notifications
           where owner_id = app_owner() and sent_at is null and fire_at <= $1 and fire_at >= $2 order by fire_at limit 200 for update skip locked`,
         [new Date(now.getTime() + earlyMs()), new Date(now.getTime() - LATE_MS)]);
+      await c.query(`delete from scheduled_notifications where owner_id = app_owner() and fire_at < now() - interval '2 days'`);
+      const nx = (await c.query(`select min(extract(epoch from fire_at) * 1000) as t from scheduled_notifications where owner_id = app_owner() and sent_at is null and fire_at > $1`, [new Date(now.getTime() + earlyMs())])).rows[0].t;
+      if (nx && (!report.nextAt || +nx < report.nextAt)) report.nextAt = Number(nx);
       if (!due.length) return;
       const { rows: subs } = await c.query('select id, endpoint, p256dh, auth from push_subscriptions where owner_id = app_owner()');
       for (const n of due) {
         report.due++;
-        const payload = JSON.stringify({ title: n.title, body: n.body, url: n.url || '/#/today', tag: n.tag || n.key, at: new Date(n.fire_at).getTime() });
+        const payload = JSON.stringify({ title: n.title, body: n.body, url: n.url || '/#/today', tag: n.tag || n.key, key: n.key, at: new Date(n.fire_at).getTime() });
         for (const s of subs) {
           try {
             await webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, payload, { TTL: 900, urgency: 'high', timeout: 8000 });

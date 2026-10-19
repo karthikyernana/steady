@@ -21,10 +21,11 @@ export async function requestPermission() {
   return p;
 }
 
-export async function showLocal(title, body, tag = 'steady') {
+// Task reminders carry Done / Snooze actions (handled in sw.js); the same tag as the server push, so the two never stack.
+export async function showLocal(title, body, tag = 'steady', extra = {}) {
   if (permission() !== 'granted') return false;
   const reg = await navigator.serviceWorker?.getRegistration();
-  const opts = { body, tag, icon: 'icons/icon-192.png', badge: 'icons/badge-96.png', data: { url: './#/today' } };
+  const opts = { body, tag, icon: 'icons/icon-192.png', badge: 'icons/badge-96.png', data: { url: './#/today', ...extra.data }, ...(extra.actions ? { actions: extra.actions, renotify: true, requireInteraction: !!extra.sticky } : {}) };
   if (reg) { await reg.showNotification(title, opts); return true; }
   new Notification(title, opts); return true;
 }
@@ -38,7 +39,7 @@ export function fireAt(t) {
 }
 
 // ---------- local scheduler (runs while a page is alive) ----------
-let timer = null;
+let timer = null, armLocal = () => {};
 export function startLocalScheduler(onInApp) {
   clearInterval(timer);
   const tick = async () => {
@@ -52,8 +53,9 @@ export function startLocalScheduler(onInApp) {
       if (fired[key]) continue;
       fired[key] = now; changed = true;
       const body = t.durationMin ? `${t.durationMin} min · ${fmtTime(t.dueTime)}` : fmtTime(t.dueTime);
+      // In the app: a toast AND a system notification (a toast alone is easy to miss on a phone in a pocket).
       if (document.visibilityState === 'visible') onInApp?.(t);
-      else await showLocal(t.title, body, `task-${t.id}`);
+      await showLocal(t.title, body, `task-${t.id}`, taskNoteExtra(t)).catch(() => {});
     }
     const ci = checkinFireAt(todayKey());
     if (ci && ci <= now && ci > now - 10 * 60e3 && !fired[`checkin@${ci}`] && !all('checkins').some(c => c.date === todayKey())) {
@@ -81,7 +83,6 @@ export function startLocalScheduler(onInApp) {
   timer = setInterval(run, 20e3);
   armLocal = arm;
 }
-let armLocal = () => {};
 export const rearmLocal = () => armLocal();
 
 export function checkinFireAt(dayKey) {
@@ -93,6 +94,9 @@ export function checkinFireAt(dayKey) {
   const m = Math.max(sleep - 90, 19 * 60);
   return fromKey(dayKey).getTime() + m * 60e3;
 }
+
+export const taskNoteExtra = t => ({ data: { key: `st-${t.id}`, taskId: t.id }, sticky: t.priority === 3,
+  actions: [{ action: 'done', title: 'Done' }, { action: 'snooze', title: 'Snooze 10 min' }] });
 
 // ---------- ntfy ----------
 const asciiSafe = s => (/^[\x20-\x7e]*$/.test(s) ? s : `=?UTF-8?B?${btoa(String.fromCharCode(...new TextEncoder().encode(s)))}?=`);
@@ -115,18 +119,21 @@ export async function ntfyCancel(topic, seq) {
 export function ntfyTopic() { const s = meta('settings'); return s.ntfyEnabled && s.ntfyTopic ? s.ntfyTopic : null; }
 
 // Every reminder Steady wants delivered between now and `horizon` ms ahead, keyed by a stable id.
-export function wantedReminders(horizon) {
+// `pastMs` keeps reminders that just came due (not yet confirmed sent) in the set, so a device never deletes one from the
+// server queue before the sender had its chance. ntfy uses 0 (it cannot schedule into the past).
+export function wantedReminders(horizon, pastMs = 0) {
   const want = {}, now = Date.now();
+  const lo = pastMs ? now - pastMs : now + MIN_AHEAD;
   for (const t of all('tasks')) {
     const at = fireAt(t);
-    if (!at || at < now + MIN_AHEAD || at > now + horizon) continue;
+    if (!at || at < lo || at > now + horizon) continue;
     const body = [t.durationMin ? `${t.durationMin} min` : null, `due ${fmtTime(t.dueTime)}`].filter(Boolean).join(' · ');
     want[`st-${t.id}`] = { at, title: t.title, body, tags: t.priority === 3 ? 'alarm_clock,warning' : 'alarm_clock', tag: `task-${t.id}`, url: '/#/today' };
   }
   for (let i = 0; i <= Math.ceil(horizon / 864e5); i++) {
     const k = keyAdd(todayKey(), i);
     const at = checkinFireAt(k);
-    if (at && at > now + MIN_AHEAD && at < now + horizon && !all('checkins').some(c => c.date === k))
+    if (at && at > lo && at < now + horizon && !all('checkins').some(c => c.date === k))
       want[`st-checkin-${k.replace(/-/g, '')}`] = { at, title: 'Evening check-in', body: 'Energy, one win, and one thing you did for yourself. Two minutes.', tags: 'crescent_moon', tag: 'checkin', url: '/?checkin=1#/today' };
   }
   return want;
@@ -162,8 +169,10 @@ export function reconcileRemote() {
   if (!cloudReady() || !navigator.onLine) return Promise.resolve(-1);
   if (remoteBusy) return remoteBusy;
   remoteBusy = (async () => {
-    const want = wantedReminders(14 * 864e5);
-    const cache = { ...local('remoteSched', {}) };
+    const want = wantedReminders(14 * 864e5, 30 * 60e3);
+    // Re-send everything every 6 h (idempotent on the server), so a queue that lost rows heals itself.
+    const fresh = Date.now() - (local('remoteSchedAt') || 0) < 6 * 3600e3;
+    const cache = fresh ? { ...local('remoteSched', {}) } : {};
     const upsert = [], del = [];
     for (const [k, w] of Object.entries(want)) {
       const sig = `${w.at}|${w.title}|${w.body}`;
@@ -176,14 +185,18 @@ export function reconcileRemote() {
       for (const k of del) delete cache[k];
       await setLocal('remoteSched', cache);
     }
+    if (!fresh) await setLocal('remoteSchedAt', Date.now());
     return upsert.length + del.length;
   })().catch(e => { console.warn('reminders', e.message); return -1; }).finally(() => { remoteBusy = null; });
   return remoteBusy;
 }
 
-let reconciling = null;
-// Make ntfy's scheduled queue match the current tasks. Safe to call often.
+let reconciling = null, remoteTimer = null;
+// Every reminder change goes through here: re-arm the on-device timer, mirror to the server queue soon (not only after the
+// next sync), and make ntfy's queue match. Safe to call often.
 export function reconcileNtfy() {
+  clearTimeout(remoteTimer); remoteTimer = setTimeout(() => { reconcileRemote(); }, 1200);
+  armLocal();
   if (reconciling) return reconciling;
   reconciling = (async () => {
     const topic = ntfyTopic();
@@ -210,3 +223,7 @@ export function reconcileNtfy() {
   })().catch(e => { reconciling = null; console.warn('ntfy', e); return -1; });
   return reconciling;
 }
+
+// ---------- delivery health (Settings → Reminders) ----------
+export const reminderStatus = () => api('GET', 'reminders/status');
+export const sendTestReminder = (seconds = 60) => api('POST', 'reminders/test', { seconds });

@@ -14,7 +14,8 @@ import { knownCategories } from './views/money.js';
 import { reconcileNtfy, rearmLocal } from '../platform/notify.js';
 import * as motion from './motion.js';
 
-const MAX_MS = 30_000, SILENCE_MS = 2200;
+const TUNE = window.__steadyVoiceTune || {};   // test hook (shorter segments in e2e); unset in normal use
+const MAX_MS = TUNE.max || 120_000, SEG_MS = TUNE.seg || 25_000, SILENCE_MS = TUNE.silence || 3200, MIN_SPEECH_MS = 450;
 const PROVIDER = { gemini: 'Gemini', sarvam: 'Sarvam', rules: 'basic rules', device: 'this device' };
 let cfg = local('serverConfig') || {};
 serverConfig().then(c => { cfg = c || {}; }).catch(() => {});
@@ -34,9 +35,11 @@ export function mountMic(root = document) {
     try { b.setPointerCapture(e.pointerId); } catch { /* synthetic */ }
     b.classList.add('pressed');
     openVoice();
+    if (S) S.holding = true;        // while the finger is down, a pause never ends the recording
   });
   const up = () => {
     if (!held) return; held = false; b.classList.remove('pressed');
+    if (S) S.holding = false;
     if (performance.now() - t0 > 450 && S?.phase === 'listening') stopRecording();      // hold-to-talk: release = done
   };
   b.addEventListener('pointerup', up); b.addEventListener('pointercancel', up);
@@ -81,52 +84,99 @@ const grow = ta => { ta.style.height = 'auto'; ta.style.height = `${Math.min(ta.
 document.addEventListener('input', e => { if (e.target.matches?.('.vx textarea')) grow(e.target); });
 
 // ---------------------------------------------------------------- recording
+// Every async step checks it still belongs to the live session and recording attempt (S === s && s.gen === gen), so a slow
+// transcription or a late recorder event from a previous tap can never land in (and break) the next one.
+// Long speech is recorded in ~25 s segments (Sarvam's synchronous STT takes ≤ 30 s per file), cut at a natural pause, and
+// transcribed while you keep talking; the transcripts are joined in order. Up to 2 minutes per turn.
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const live = (s, gen) => S === s && s.gen === gen && s.phase === 'listening';
+let micFree = Promise.resolve();          // the previous session's mic/audio teardown; the next getUserMedia waits for it
+async function getMic() {
+  await micFree;
+  const c = { audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } };
+  for (let i = 0; ; i++) {
+    try { return await navigator.mediaDevices.getUserMedia(c); }
+    catch (e) {   // NotReadableError/AbortError: the OS hasn't released the mic from the last tap yet; give it a moment
+      if (e.name === 'NotAllowedError' || e.name === 'SecurityError' || i >= 3) throw e;
+      await sleep(200 * (i + 1));
+    }
+  }
+}
 const pickMime = () => ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'].find(t => MediaRecorder.isTypeSupported?.(t)) || '';
 async function startRecording() {
+  const s = S; if (!s) return;
+  const gen = (s.gen = (s.gen || 0) + 1);
   set('listening', `<div class="vx-listen">
       <canvas class="vx-wave" aria-hidden="true"></canvas>
       <div class="vx-timer"><span class="vx-dot"></span><span id="vx-time">0:00</span></div>
-      <p class="vx-hint">Listening. English, తెలుగు, or both.<br><small>Pause for a moment or tap Done when you finish.</small></p></div>
+      <p class="vx-hint" id="vx-hint">Listening. English, తెలుగు, or both.<br><small>Take your time. Tap Done when you finish.</small></p></div>
     <div class="vx-actions"><button class="btn ghost sm" type="button" data-vx="type">${I.keyboard}<span>Type instead</span></button>
       <button class="btn primary" type="button" data-vx="stop" data-testid="vx-stop">${I.stop}<span>Done</span></button></div>`);
-  try {
-    S.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
-  } catch (e) {
-    renderTyping(e.name === 'NotAllowedError' ? 'Microphone access is blocked for Steady. Allow it in the browser’s site settings, or type here.' : 'Could not start the microphone. Type it instead.');
+  let stream;
+  try { stream = await getMic(); }
+  catch (e) {
+    if (S === s && s.gen === gen) renderTyping(e.name === 'NotAllowedError' ? 'Microphone access is blocked for Steady. Allow it in the browser’s site settings, or type here.' : 'The microphone is busy right now. Type it, or try again in a second.');
     return;
   }
-  if (!S || S.phase !== 'listening') { S?.stream?.getTracks().forEach(t => t.stop()); return; }
-  const mime = pickMime();
-  S.chunks = [];
-  S.rec = new MediaRecorder(S.stream, mime ? { mimeType: mime, audioBitsPerSecond: 32000 } : undefined);
-  S.rec.ondataavailable = e => { if (e.data?.size) S?.chunks.push(e.data); };
-  S.rec.onstop = onRecorded;
-  S.rec.start(250);
-  S.t0 = performance.now();
+  if (!live(s, gen)) { stream.getTracks().forEach(t => t.stop()); return; }
+  s.stream = stream; s.segs = []; s.segErr = null; s.blobBytes = 0;
+  s.mime = pickMime();
+  s.t0 = performance.now();
+  startSegment(s, gen);
   navigator.vibrate?.(8);
-  meter();
+  meter(s, gen);
 }
-function meter() {
+function startSegment(s, gen) {
+  const chunks = [];
+  const rec = new MediaRecorder(s.stream, s.mime ? { mimeType: s.mime, audioBitsPerSecond: 32000 } : undefined);
+  rec.ondataavailable = e => { if (e.data?.size) chunks.push(e.data); };
+  rec.onstop = () => onSegment(s, gen, new Blob(chunks, { type: rec.mimeType || s.mime || 'audio/webm' }), !!rec.final);
+  rec.start(250);
+  s.rec = rec; s.segT0 = performance.now();
+}
+// Rotate to a new segment: start the next recorder first, then stop the old one, so no audio falls in the gap.
+function rotate(s, gen) { const old = s.rec; startSegment(s, gen); old.final = false; if (old.state !== 'inactive') old.stop(); }
+function onSegment(s, gen, blob, final) {
+  if (S !== s || s.gen !== gen) return;
+  s.blobBytes += blob.size;
+  if (blob.size >= 800) s.segs.push(transcribeAudio(blob).then(r => r.transcript || '').catch(e => { s.segErr = e; return ''; }));
+  if (final) finalize(s, gen);
+}
+function meter(s, gen) {
   try {
-    S.ac = new (window.AudioContext || window.webkitAudioContext)();
-    const src = S.ac.createMediaStreamSource(S.stream); S.an = S.ac.createAnalyser(); S.an.fftSize = 1024; src.connect(S.an);
-  } catch { S.an = null; }
+    s.ac = new (window.AudioContext || window.webkitAudioContext)();
+    const src = s.ac.createMediaStreamSource(s.stream); s.an = s.ac.createAnalyser(); s.an.fftSize = 1024; src.connect(s.an);
+  } catch { s.an = null; }
   const cv = $('.vx-wave'), ctx = cv?.getContext('2d');
   const buf = new Float32Array(1024), hist = new Array(48).fill(0);
-  let heard = false, quietSince = 0, lastDraw = 0;
+  // Adaptive voice detection: learn the room's noise floor, call it speech only well above it, and finish only after a
+  // real pause (SILENCE_MS) once you've actually spoken. Holding the button never auto-finishes.
+  let floor = 0.008, speechMs = 0, quietSince = 0, lastDraw = 0, last = performance.now(), hinted = false;
   const calmMotion = motion.calm();
   const tick = now => {
-    if (!S || S.phase !== 'listening') return;
-    const el = now - S.t0;
+    if (!live(s, gen)) return;
+    const el = now - s.t0, dt = now - last; last = now;
     let rms = 0;
-    if (S.an) { S.an.getFloatTimeDomainData(buf); for (const v of buf) rms += v * v; rms = Math.sqrt(rms / buf.length); }
-    if (rms > 0.035) { heard = true; quietSince = 0; } else if (heard && rms < 0.018) quietSince ||= now;
-    if ((heard && quietSince && now - quietSince > SILENCE_MS) || el > MAX_MS) { stopRecording(); return; }
-    const tEl = $('#vx-time'); if (tEl) { const s = Math.floor(el / 1000); tEl.textContent = `0:${String(s).padStart(2, '0')}${el > MAX_MS - 5000 ? ' / 0:30' : ''}`; }
+    if (s.an) { s.an.getFloatTimeDomainData(buf); for (const v of buf) rms += v * v; rms = Math.sqrt(rms / buf.length); }
+    const speakTh = Math.max(0.018, floor * 3), quietTh = Math.max(0.01, floor * 1.8);
+    if (rms > speakTh) { speechMs += dt; quietSince = 0; }
+    else { if (rms < quietTh) quietSince ||= now; floor = floor * 0.97 + Math.min(rms, 0.05) * 0.03; }
+    const heard = speechMs > MIN_SPEECH_MS;
+    const quietFor = quietSince ? now - quietSince : 0;
+    const hint = $('#vx-hint');
+    if (hint && heard && !s.holding) {
+      const want = quietFor > 1200;
+      if (want !== hinted) { hinted = want; hint.innerHTML = want ? 'Finishing in a moment…<br><small>Keep talking to continue.</small>' : 'Listening. English, తెలుగు, or both.<br><small>Take your time. Tap Done when you finish.</small>'; }
+    }
+    if (el > MAX_MS || (heard && !s.holding && quietFor > SILENCE_MS)) { stopRecording(); return; }
+    const segEl = now - s.segT0;
+    if (segEl > SEG_MS && (quietFor > 250 || segEl > SEG_MS + 4000)) rotate(s, gen);
+    const tEl = $('#vx-time');
+    if (tEl) { const sec = Math.floor(el / 1000); tEl.textContent = `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}${el > MAX_MS - 10_000 ? ' / 2:00' : ''}`; }
     if (ctx && (!calmMotion || now - lastDraw > 200)) { lastDraw = now; hist.push(Math.min(1, rms * 9)); hist.shift(); drawWave(cv, ctx, hist); }
-    S.raf = requestAnimationFrame(tick);
+    s.raf = requestAnimationFrame(tick);
   };
-  S.raf = requestAnimationFrame(tick);
+  s.raf = requestAnimationFrame(tick);
 }
 function drawWave(cv, ctx, hist) {
   const dpr = devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight;
@@ -140,43 +190,48 @@ function drawWave(cv, ctx, hist) {
 function roundRect(c, x, y, w, h, r) { c.beginPath(); c.moveTo(x + r, y); c.arcTo(x + w, y, x + w, y + h, r); c.arcTo(x + w, y + h, x, y + h, r); c.arcTo(x, y + h, x, y, r); c.arcTo(x, y, x + w, y, r); c.closePath(); }
 
 export function stopRecording() {
-  if (!S || S.phase !== 'listening') return;
-  S.phase = 'stopping';
-  cancelAnimationFrame(S.raf);
-  if (S.rec && S.rec.state !== 'inactive') S.rec.stop(); else onRecorded();
+  const s = S;
+  if (!s || s.phase !== 'listening') return;
+  s.phase = 'stopping';
+  cancelAnimationFrame(s.raf);
+  if (s.rec && s.rec.state !== 'inactive') { s.rec.final = true; s.rec.stop(); } else finalize(s, s.gen);
 }
-function releaseMic() { S?.stream?.getTracks().forEach(t => t.stop()); S?.ac?.close?.().catch(() => {}); if (S) { S.stream = null; S.ac = null; } }
+function releaseMic(s = S) {
+  if (!s) return;
+  s.stream?.getTracks().forEach(t => t.stop());
+  const ac = s.ac; s.stream = null; s.ac = null; s.an = null;
+  micFree = Promise.all([ac?.close?.().catch(() => {}), sleep(120)]);
+}
 
-async function onRecorded() {
-  releaseMic();
-  if (!S) return;
-  const dur = performance.now() - (S.t0 || 0);
-  const blob = new Blob(S.chunks || [], { type: S.rec?.mimeType || 'audio/webm' });
-  window.__steadyVoice.last = { ms: Math.round(dur), bytes: blob.size, type: blob.type, chunks: (S.chunks || []).length };
-  if (dur < 500 || blob.size < 800) { renderError('I didn’t catch anything. Try again a little closer to the mic.'); return; }
-  renderThinking('', 'Transcribing…');
-  try {
-    const r = await transcribeAudio(blob);
-    if (!S) return;
-    if (!r.transcript) { renderError('I couldn’t make out any words. Try again, or type it.'); return; }
-    S.sttMs = r.ms;
-    await understand(r.transcript);
-  } catch (e) { if (S) renderError(friendly(e)); }
+async function finalize(s, gen) {
+  if (S !== s || s.gen !== gen) return;
+  releaseMic(s);
+  const dur = performance.now() - (s.t0 || 0);
+  window.__steadyVoice.last = { ms: Math.round(dur), bytes: s.blobBytes, type: s.mime, segments: s.segs.length };
+  if (dur < 500 || !s.segs.length) { renderError('I didn’t catch anything. Try again a little closer to the mic.'); return; }
+  renderThinking('', s.segs.length > 1 ? `Transcribing ${s.segs.length} parts…` : 'Transcribing…');
+  const parts = await Promise.all(s.segs);
+  if (S !== s || s.gen !== gen) return;
+  const text = parts.map(x => x.trim()).filter(Boolean).join(' ');
+  if (!text) { renderError(s.segErr ? friendly(s.segErr) : 'I couldn’t make out any words. Try again, or type it.'); return; }
+  await understand(text);
 }
 
 // ---------------------------------------------------------------- understanding
 async function understand(text) {
-  S.text = text.trim();
-  if (!S.text) return;
-  renderThinking(S.text, 'Understanding…');
+  const s = S; if (!s) return;
+  s.text = text.trim();
+  if (!s.text) return;
+  const gen = (s.gen = (s.gen || 0) + 1);
+  renderThinking(s.text, 'Understanding…');
   const t0 = performance.now();
   try {
-    const r = await planText(S.text);
-    if (!S) return;
-    S.drafts = r.drafts || []; S.originals = Object.fromEntries(S.drafts.map(d => [d.key, structuredClone(d)]));
-    S.meta = { provider: r.provider, ms: Math.round(performance.now() - t0), clarification: r.clarification };
+    const r = await planText(s.text);
+    if (S !== s || s.gen !== gen) return;
+    s.drafts = r.drafts || []; s.originals = Object.fromEntries(s.drafts.map(d => [d.key, structuredClone(d)]));
+    s.meta = { provider: r.provider, ms: Math.round(performance.now() - t0), clarification: r.clarification };
     renderReview();
-  } catch (e) { if (S) renderError(friendly(e), true); }
+  } catch (e) { if (S === s && s.gen === gen) renderError(friendly(e), true); }
 }
 
 // ---------------------------------------------------------------- states
@@ -366,7 +421,7 @@ async function onClick(e) {
   const b = e.target.closest('[data-vx]'); if (!b || !S) return;
   const act = b.dataset.vx;
   if (act === 'stop') stopRecording();
-  else if (act === 'type') { if (S.phase === 'listening') { cancelAnimationFrame(S.raf); S.phase = 'typing'; if (S.rec && S.rec.state !== 'inactive') { S.rec.onstop = null; S.rec.stop(); } } renderTyping(); }
+  else if (act === 'type') { S.gen = (S.gen || 0) + 1; cancelAnimationFrame(S.raf); if (S.rec && S.rec.state !== 'inactive') { S.rec.onstop = null; S.rec.stop(); } renderTyping(); }
   else if (act === 'voice') { S.text = ''; startRecording(); }
   else if (act === 'retry') understand(S.text);
   else if (act === 'edit') { const el = b.closest('.dcard'); const opening = el.classList.toggle('collapsed') === false; b.textContent = opening ? 'Done editing' : 'Edit'; b.setAttribute('aria-expanded', String(opening)); if (opening) el.querySelector('[data-f]')?.focus({ preventScroll: true }); }
@@ -397,7 +452,7 @@ function finish() {
   const s = S; S = null;
   cancelAnimationFrame(s.raf);
   if (s.rec && s.rec.state !== 'inactive') { s.rec.onstop = null; s.rec.stop(); }
-  s.stream?.getTracks().forEach(t => t.stop()); s.ac?.close?.().catch(() => {});
+  releaseMic(s);
   if (!s.done) return;
   reconcileNtfy(); rearmLocal();
   sendLearning(s.pairs);

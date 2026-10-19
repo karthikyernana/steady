@@ -3,9 +3,9 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { query, withOwner } from './db.js';
 import { currentOwner, startSession, endSession, verifyGoogleIdToken, checkPassphrase, tooManyAttempts, logAttempt, hashToken, findOwner, createOwner, setPassword, signupMode, mayCreate, normEmail, validEmail, verifyGithubOidc } from './auth.js';
 import { migrate } from './migrate.js';
-import { sendDue } from './push.js';
+import { sendDue, vapidReady } from './push.js';
+import { triggerFor, triggerMode } from './trigger.js';
 import { AgentError, agentConfig, countUse, transcribe, plan, learnFrom, getMemory, memorySummary, resetMemory } from './agent.js';
-import { scheduleExact, qstashReady } from './qstash.js';
 
 const COLLS = new Set(['tasks', 'goals', 'thoughts', 'checkins', 'meta', 'money']);
 const MAX_BODY = 2_000_000;
@@ -203,14 +203,56 @@ const routes = {
         if (typeof r.key !== 'string' || !r.key || !Number.isFinite(r.fireAt) || typeof r.title !== 'string') fail(400, 'Malformed reminder');
         await c.query(
           `insert into scheduled_notifications (owner_id, key, fire_at, title, body, url, tag) values ($1, $2, to_timestamp($3 / 1000.0), $4, $5, $6, $7)
-           on conflict (owner_id, key) do update set fire_at = excluded.fire_at, title = excluded.title, body = excluded.body, url = excluded.url, tag = excluded.tag`,
+           on conflict (owner_id, key) do update set fire_at = excluded.fire_at, title = excluded.title, body = excluded.body, url = excluded.url, tag = excluded.tag,
+             sent_at = case when scheduled_notifications.fire_at is distinct from excluded.fire_at then null else scheduled_notifications.sent_at end`,
           [o.id, r.key.slice(0, 160), r.fireAt, r.title.slice(0, 200), String(r.body || '').slice(0, 500), r.url || null, r.tag || null]);
       }
       if (del.length) await c.query('delete from scheduled_notifications where owner_id = app_owner() and key = any($1)', [del]);
     });
-    // precise trigger (optional): wake the sender at the exact minute instead of waiting for the 5-minute cron
-    const exact = qstashReady() ? await scheduleExact(up.map(r => r.fireAt)).catch(() => ({ scheduled: 0 })) : null;
-    return { upserted: up.length, deleted: del.length, exact: exact?.scheduled ?? null };
+    const trig = await triggerFor(up.map(r => r.fireAt));
+    return { upserted: up.length, deleted: del.length, exact: trig.exact, trigger: trig.mode };
+  },
+  // A notification's "Snooze" action (from the service worker): fire the same reminder again in N minutes.
+  'POST reminders/snooze': async (req, res, body) => {
+    requireCsrf(req);
+    const o = await me(req);
+    const key = String(body.key || '').slice(0, 160), min = Math.min(240, Math.max(1, Math.round(+body.minutes || 10)));
+    if (!key) fail(400, 'Missing key');
+    const at = Date.now() + min * 60e3;
+    // A separate row (<key>~snooze), so a device re-mirroring the original reminder never undoes or duplicates the snooze.
+    const base = key.replace(/~snooze$/, '');
+    const n = await withOwner(o.id, async c => (await c.query(
+      `insert into scheduled_notifications (owner_id, key, fire_at, title, body, url, tag)
+         select owner_id, $3, to_timestamp($2 / 1000.0), title, body, url, tag from scheduled_notifications where owner_id = app_owner() and key = $1
+       on conflict (owner_id, key) do update set fire_at = excluded.fire_at, sent_at = null`, [base, at, base + '~snooze'])).rowCount);
+    if (!n) fail(404, 'That reminder is gone');
+    const trig = await triggerFor([at]);
+    return { ok: true, fireAt: at, trigger: trig.mode };
+  },
+  // Real end-to-end test of the closed-app path: queue a reminder in `seconds` and let the normal trigger deliver it.
+  'POST reminders/test': async (req, res, body) => {
+    requireCsrf(req);
+    const o = await me(req);
+    const sec = Math.min(600, Math.max(5, Math.round(+body.seconds || 60)));
+    const at = Date.now() + sec * 1000;
+    await withOwner(o.id, c => c.query(
+      `insert into scheduled_notifications (owner_id, key, fire_at, title, body, url, tag) values ($1, 'st-test', to_timestamp($2 / 1000.0), $3, $4, '/#/today', 'test')
+       on conflict (owner_id, key) do update set fire_at = excluded.fire_at, title = excluded.title, body = excluded.body, sent_at = null`,
+      [o.id, at, 'Steady test reminder', 'If you can read this with Steady closed, reminders reach this device.']));
+    const trig = await triggerFor([at]);
+    return { ok: true, fireAt: at, trigger: trig.mode };
+  },
+  // What the delivery pipeline looks like for this account: devices, last delivery, what is queued, what wakes the sender.
+  'GET reminders/status': async req => {
+    const o = await me(req);
+    return withOwner(o.id, async c => {
+      const subs = (await c.query('select device, created_at, last_ok_at, last_error from push_subscriptions where owner_id = app_owner() order by created_at desc')).rows;
+      const q = (await c.query(`select count(*)::int as pending, min(extract(epoch from fire_at) * 1000) as next from scheduled_notifications
+                                 where owner_id = app_owner() and sent_at is null and fire_at > now() - interval '30 minutes'`)).rows[0];
+      const last = (await c.query('select max(extract(epoch from last_ok_at) * 1000) as t from push_subscriptions where owner_id = app_owner()')).rows[0].t;
+      return { devices: subs.map(s => ({ device: s.device, since: s.created_at, lastOk: s.last_ok_at, lastError: s.last_error })),
+        pending: q.pending, next: q.next ? Number(q.next) : null, lastSent: last ? Number(last) : null, trigger: triggerMode(), vapid: vapidReady() };
+    });
   },
   'GET reminders': async req => {
     const o = await me(req);

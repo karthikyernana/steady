@@ -167,18 +167,33 @@ else {
     const sub = { endpoint: globalThis.PUSH_ENDPOINT, keys: { p256dh: ecdh.getPublicKey().toString('base64url'), auth: randomBytes(16).toString('base64url') } };
     assert.equal((await call('POST', 'push/subscribe', { subscription: sub, device: 'test' })).status, 200);
     const now = Date.now();
-    await call('POST', 'reminders', { upsert: [{ key: 'st-a', fireAt: now - 1000, title: 'Post on LinkedIn', body: 'due 6 PM' }, { key: 'st-later', fireAt: now + 3600e3, title: 'Later' }] });
+    // a reminder that is already due goes out right away (no waiting for a trigger)
+    const up = await call('POST', 'reminders', { upsert: [{ key: 'st-a', fireAt: now - 1000, title: 'Post on LinkedIn', body: 'due 6 PM', tag: 'task-a' }, { key: 'st-later', fireAt: now + 3600e3, title: 'Later' }] });
+    assert.equal(up.status, 200); assert.equal(up.body.trigger, 'cron', 'no QStash, nothing within the near-term window outside Vercel');
+    assert.equal(pushHits.length, 1, 'due-now reminder sent immediately'); assert.equal(pushHits[0].headers['content-encoding'], 'aes128gcm'); assert.match(pushHits[0].headers.authorization, /^vapid t=/);
     assert.equal((await call('POST', 'cron/reminders', {}, { auth: 'Bearer nope' })).status, 401);
     const r1 = await call('POST', 'cron/reminders', {}, { auth: `Bearer ${process.env.CRON_SECRET}`, jar: false });
-    assert.equal(r1.status, 200); assert.equal(r1.body.sent, 1);
-    assert.equal(pushHits.length, 1); assert.equal(pushHits[0].headers['content-encoding'], 'aes128gcm'); assert.match(pushHits[0].headers.authorization, /^vapid t=/);
-    const r2 = await call('POST', 'cron/reminders', {}, { auth: `Bearer ${process.env.CRON_SECRET}`, jar: false });
-    assert.equal(r2.body.sent, 0, 'not sent twice');
-    await call('POST', 'reminders', { upsert: [{ key: 'st-a', fireAt: now - 500, title: 'Post on LinkedIn' }] });  // reschedule re-arms
+    assert.equal(r1.status, 200); assert.equal(r1.body.sent, 0, 'not sent twice'); assert.ok(r1.body.nextAt >= now + 3500e3, 'reports the next fire time');
+    // same time re-mirrored by another device: still not re-sent
+    await call('POST', 'reminders', { upsert: [{ key: 'st-a', fireAt: now - 1000, title: 'Post on LinkedIn', body: 'due 6 PM', tag: 'task-a' }] });
+    assert.equal(pushHits.length, 1, 'identical upsert does not re-arm');
+    // rescheduled to the future: re-armed (sent_at cleared), fires when due
+    await call('POST', 'reminders', { upsert: [{ key: 'st-a', fireAt: now + 120e3, title: 'Post on LinkedIn', tag: 'task-a' }] });
+    assert.equal((await call('GET', 'reminders')).body.reminders.find(r => r.key === 'st-a').sent, false, 'reschedule clears sent');
+    // snooze makes a separate row, due in N minutes
+    const sn = await call('POST', 'reminders/snooze', { key: 'st-a', minutes: 10 });
+    assert.equal(sn.status, 200); assert.ok(Math.abs(sn.body.fireAt - (Date.now() + 600e3)) < 5000);
+    assert.equal((await call('POST', 'reminders/snooze', { key: 'st-nope' })).status, 404);
+    // health endpoint
+    const st = (await call('GET', 'reminders/status')).body;
+    assert.equal(st.devices.length, 1); assert.ok(st.devices[0].lastOk, 'delivery recorded'); assert.ok(st.pending >= 3); assert.ok(st.lastSent);
+    // dead endpoint is pruned on the next due send (test reminder due now → immediate)
     pushStatus = 410;
-    const r3 = await call('POST', 'cron/reminders', {}, { auth: `Bearer ${process.env.CRON_SECRET}`, jar: false });
-    assert.equal(r3.body.pruned, 1);
-    await call('POST', 'reminders', { delete: ['st-later'] });
+    const t = await call('POST', 'reminders/test', { seconds: 5 });
+    assert.equal(t.status, 200);
+    await call('POST', 'reminders', { upsert: [{ key: 'st-now', fireAt: Date.now() - 100, title: 'Now' }] });
+    assert.equal((await call('GET', 'reminders/status')).body.devices.length, 0, 'gone endpoint pruned');
+    await call('POST', 'reminders', { delete: ['st-later', 'st-now', 'st-test', 'st-a~snooze'] });
     assert.deepEqual((await call('GET', 'reminders')).body.reminders.map(r => r.key), ['st-a']);
   });
   test('Hark read token: export is read-only and revocable', async () => {

@@ -3,11 +3,11 @@ import { esc, randomTopic, ago } from '../../core/util.js';
 import { I } from '../icons.js';
 import { on, toast, openSheet, segmented, bindSeg, toggle, confirmSheet, requestRender } from '../ui.js';
 import { account, serverConfig, syncNow, getStatus, signOut, signInWithGoogle, checkEmail, signUp, logIn, changePassword, deleteAccount, pendingCount, createReadToken, listReadTokens, revokeReadToken } from '../../data/sync.js';
-import { permission, requestPermission, showLocal, ntfyPublish, reconcileNtfy, reconcileRemote, ntfyServer, NTFY_DEFAULT, enablePush, disablePush, pushSupported } from '../../platform/notify.js';
+import { permission, requestPermission, showLocal, ntfyPublish, reconcileNtfy, reconcileRemote, ntfyServer, NTFY_DEFAULT, enablePush, disablePush, pushSupported, reminderStatus, sendTestReminder } from '../../platform/notify.js';
 import { downloadExport, importJSON } from '../../data/backup.js';
 import { agentMemory, resetAgentMemory } from '../../data/agent.js';
 
-export const APP_VERSION = '1.3.0';
+export const APP_VERSION = '1.3.1';
 let cfg = local('serverConfig') || null;
 serverConfig().then(c => { const changed = JSON.stringify(c) !== JSON.stringify(cfg); cfg = c; if (changed) requestRender(); }).catch(() => {});
 
@@ -62,7 +62,8 @@ export function renderSettings() {
     <div class="row between gap wrap"><span class="pill ${perm === 'granted' ? 'ok' : ''}" data-testid="perm-state">${perm === 'granted' ? (pushOn ? 'On, including when closed' : 'On while Steady is open') : perm === 'denied' ? 'Blocked in browser settings' : perm === 'unsupported' ? 'Not supported here' : 'Not enabled yet'}</span>
       <span class="row gap">${perm !== 'granted' && perm !== 'denied' && perm !== 'unsupported' ? '<button class="btn primary sm" data-act="notif-ask">Turn on</button>' : ''}
       ${perm === 'granted' && acct && pushSupported() && !pushOn && cfg?.vapidPublicKey ? '<button class="btn primary sm" data-act="push-on" data-testid="push-on">Also when closed</button>' : ''}
-      ${perm === 'granted' ? '<button class="btn ghost sm" data-act="notif-test" data-testid="notif-test">Test</button>' : ''}</span></div>
+      ${perm === 'granted' ? `<button class="btn ghost sm" data-act="notif-test" data-testid="notif-test">${acct && pushOn ? 'Test with app closed' : 'Test'}</button>` : ''}</span></div>
+    ${acct && pushOn ? '<p class="hint small" id="rem-health" data-testid="rem-health">Checking delivery…</p>' : ''}
     <div class="grid2 mt stack-sm">
       <label class="field"><span>Remind me</span><select id="lead">${[[0, 'At the time'], [5, '5 min before'], [10, '10 min before'], [15, '15 min before'], [30, '30 min before']].map(([v, l]) => `<option value="${v}" ${+(s.reminderLead ?? 0) === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       <div class="field"><span>Evening check-in nudge</span>${toggle('ci-nudge', s.checkinNudge !== false, 'About 90 min before sleep')}</div>
@@ -108,6 +109,13 @@ export function renderSettings() {
 }
 
 export function mountSettings(root) {
+  const health = root.querySelector('#rem-health');
+  if (health) reminderStatus().then(r => {
+    const last = r.lastSent ? `last delivered ${ago(r.lastSent)}` : 'nothing delivered yet';
+    const mode = r.trigger === 'exact' ? 'on the minute' : 'on the minute when set within 5 min, otherwise within ~20 min';
+    const bad = (r.devices || []).filter(d => d.lastError).length;
+    health.textContent = `${r.devices.length} ${r.devices.length === 1 ? 'device' : 'devices'} · ${r.pending} queued · ${last} · ${mode}${bad ? ` · ${bad} device${bad > 1 ? 's' : ''} failing` : ''}`;
+  }).catch(() => { health.textContent = ''; });
   root.querySelector('#pf')?.addEventListener('submit', async e => {
     e.preventDefault(); const f = e.target;
     await setMeta('profile', { name: f.name.value.trim(), wake: f.wake.value, sleep: f.sleep.value });
@@ -143,7 +151,12 @@ on('sign-out', async () => {
 on('sign-in', () => openSignIn());
 on('notif-ask', async () => { const p = await requestPermission(); if (p === 'granted' && account()) await enablePush().catch(() => {}); requestRender(); });
 on('push-on', async () => { try { await enablePush(); toast('Reminders will arrive even when Steady is closed.'); } catch (x) { toast(`Couldn't enable push: ${x.message}`); } requestRender(); });
-on('notif-test', () => showLocal('Steady', 'Reminders work on this device.', 'test'));
+// Signed in with push: a real round trip through the server (queue → trigger → Web Push), so "Test" proves the closed-app path.
+on('notif-test', async () => {
+  if (!(account() && local('pushOn'))) { showLocal('Steady', 'Reminders work on this device.', 'test'); return; }
+  try { await sendTestReminder(30); toast('Test reminder in 30 seconds. Close or lock the app now.', { ms: 6000 }); }
+  catch (x) { toast(`Couldn't queue the test: ${x.message}`); showLocal('Steady', 'Reminders work on this device.', 'test'); }
+});
 on('ntfy-new', async () => { if (await confirmSheet('Make a new topic? You will need to subscribe to it again in the ntfy app.', 'New topic')) { await setMeta('settings', { ntfyTopic: randomTopic() }); await setLocal('ntfySched', {}); reconcileNtfy(); } });
 on('ntfy-test', async el => {
   const s = meta('settings'); el.disabled = true;

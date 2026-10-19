@@ -71,10 +71,16 @@ export async function transcribe(buf, mime) {
   if (STT_MODEL() === 'saaras:v3') fd.append('mode', STT_MODE());   // `mode` is a saaras:v3 parameter
   fd.append('language_code', env('SARVAM_STT_LANGUAGE') || 'unknown');
   const t0 = Date.now();
-  let res;
-  try { res = await fetch(`${SARVAM()}/speech-to-text`, { method: 'POST', headers: { 'api-subscription-key': env('SARVAM_API_KEY') }, body: fd, signal: AbortSignal.timeout(20_000) }); }
-  catch (e) { throw new AgentError(502, `Speech service did not answer (${e.name === 'TimeoutError' ? 'timeout' : 'network'}). Try again or type it.`); }
-  const j = await res.json().catch(() => ({}));
+  // One quiet retry for a busy (429) or flaky (5xx / network) moment: several quick turns in a row shouldn't surface an error.
+  let res, j = {};
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try { res = await fetch(`${SARVAM()}/speech-to-text`, { method: 'POST', headers: { 'api-subscription-key': env('SARVAM_API_KEY') }, body: fd, signal: AbortSignal.timeout(20_000) }); }
+    catch (e) { if (attempt) throw new AgentError(502, `Speech service did not answer (${e.name === 'TimeoutError' ? 'timeout' : 'network'}). Try again or type it.`); await new Promise(r => setTimeout(r, 600)); continue; }
+    j = await res.json().catch(() => ({}));
+    if (res.ok || attempt || !(res.status === 429 || res.status >= 500)) break;
+    console.warn('[stt] retrying after', res.status);
+    await new Promise(r => setTimeout(r, res.status === 429 ? 900 : 500));
+  }
   if (!res.ok) { console.warn('[stt]', res.status, JSON.stringify(j).slice(0, 300)); throw new AgentError(res.status === 429 ? 429 : 502, res.status === 429 ? 'The speech service is busy. Try again in a moment.' : "Couldn't transcribe that. Try again or type it."); }
   return { transcript: String(j.transcript || '').trim().slice(0, MAX_TEXT), language: j.language_code || null, ms: Date.now() - t0, model: STT_MODEL() };
 }

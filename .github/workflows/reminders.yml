@@ -1,9 +1,10 @@
-# Every ~5 minutes, asks Steady's API to send any due reminders as Web Push.
+# Backstop (GitHub runs schedules late or skips them; the precise path is QStash / the near-term timer, see docs/NOTIFICATIONS.md).
+# Every ~20 minutes (not 5: each call wakes the Neon database for ~5 min, and the free plan has 100 CU-hours a month), asks Steady's API to send any due reminders as Web Push.
 # Auth: a short-lived GitHub OIDC token (no stored secret). The API only accepts tokens minted for this repo's workflow.
 name: reminders
 on:
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "7,27,47 * * * *"
   workflow_dispatch:
 permissions:
   id-token: write
@@ -16,4 +17,6 @@ jobs:
         run: |
           set -euo pipefail
           TOKEN=$(curl -fsS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=steady-cron" | jq -r .value)
-          curl -fsS -X POST "https://steady-swart-mu.vercel.app/api/cron/reminders" -H "Authorization: Bearer $TOKEN"
+          # A redirect must fail loudly (an old domain once turned every run into a silent no-op).
+          CODE=$(curl -sS -o out.json -w '%{http_code}' -X POST "https://karthikytodo.vercel.app/api/cron/reminders" -H "Authorization: Bearer $TOKEN")
+          cat out.json; echo; test "$CODE" = 200

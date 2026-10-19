@@ -3,6 +3,25 @@
 All notable changes to Steady. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 The data contract has its own version (`schemaVersion`, see docs/DATA_MODEL.md); an app release that changes it must ship a migration.
 
+## [1.3.1] - 2026-10-20
+
+### Fixed
+- Reminders never reached phones: the server had never delivered a push (GitHub's schedule barely ran and hit the old,
+  redirecting domain). Due reminders now send immediately; reminders within 4.5 min are sent by a near-term timer
+  (Vercel waitUntil); QStash remains the optional exact trigger; the GitHub cron is a loud-failing backstop every 20 min.
+- Devices no longer delete just-due reminders from the server queue; a rescheduled reminder re-arms (`sent_at` cleared).
+- The queue updates as soon as a reminder changes, not only after the next sync; full re-mirror every 6 h self-heals.
+- Foreground reminders show a system notification too, not just a toast.
+- Voice: every async step is bound to its session, so rapid taps can't leak a stale recording/transcript into the next turn;
+  the mic is re-acquired only after the previous one is released (with retry); Sarvam busy/5xx gets one quiet retry.
+- Voice cut-offs: adaptive noise floor, 3.2 s pause (after real speech) before auto-finish, "Finishing…" hint, never while
+  holding; long speech is recorded in ~25 s segments at natural pauses and transcribed in parallel (up to 2 min).
+
+### Added
+- Notification actions: Done and Snooze 10 min. `POST /api/reminders/snooze`, `POST /api/reminders/test`,
+  `GET /api/reminders/status`; You → Reminders shows delivery health and "Test with app closed".
+- docs/ADAPTIVE_UX.md (exploration), research on comparable apps in docs/NOTIFICATIONS.md, tests/qa/voice_stress_e2e.py.
+
 ## 1.3.0 — Money, voice agent, UI pass, new styles (2026-10-19)
 - **Money tab:** income and expenses in ₹ with quick-add (“250 lunch swiggy”, “got 5000 stipend”, “ఐదు వందలు పెట్రోల్”), categories that keep your spelling and learn payees, a monthly view (spent, came in, net, per day, by category, day by day), month switcher, optional monthly budgets (total and per category) with a calm "left this month" line. Synced like everything else (local-first, LWW, RLS).
 - **One mic, app-wide** (floating button; **V** on a keyboard): tap to talk, or hold and release; auto-stops on a pause; live waveform. Typing works in the same sheet.

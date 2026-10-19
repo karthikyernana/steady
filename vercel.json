@@ -63,7 +63,7 @@
   ],
   "functions": {
     "api/index.js": {
-      "maxDuration": 30,
+      "maxDuration": 300,
       "includeFiles": "{db/migrations/**,js/core/**}"
     }
   },

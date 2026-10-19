@@ -1,5 +1,60 @@
 # Reminders: how they fire, and how to make them land on the minute
 
+## v1.3.1 incident: reminders never reached phones (fixed 2026-10-20)
+
+What production showed (Neon, 2026-10-20 00:30 IST): 3 push subscriptions (1 Android, 2 desktop), **`last_ok_at` empty on all three**:
+the server had never delivered a single push. Causes, in order of impact:
+
+1. **Nothing woke the sender.** GitHub ran the `*/5` schedule once in ~7.5 hours (new-repo schedules are best-effort), and that
+   one run POSTed to the old domain, got a 307 and, with `curl -f` not following redirects, "succeeded" without sending.
+2. **Devices deleted reminders the moment they came due.** `wantedReminders()` only covered the future, so the next reconcile
+   removed a just-due row from the queue before any sender could pick it up (the 22:25 "Set alarm" test disappeared this way).
+3. **A rescheduled reminder never fired again.** The queue upsert kept `sent_at`, so a task whose reminder had fired once was
+   skipped forever after its time changed.
+4. **The queue only updated after a full sync round**, not when the reminder was created.
+5. **In the foreground, only a toast** (no system notification), easy to miss on a phone.
+6. **Hidden cost trap:** a 5-minute cron that wakes Neon keeps the free compute (100 CU-hours/month, 5-minute scale-to-zero)
+   awake around the clock: about 180 CU-hours. Had the cron worked as designed it would have suspended the database mid-month.
+
+Fixes: see "Delivery pipeline" below. Tests: `tests/api/api.test.mjs` (due-now send, no double send, reschedule re-arms,
+snooze, status, pruning), `tests/qa/voice_stress_e2e.py`.
+
+## Delivery pipeline (v1.3.1)
+
+Every path calls the same idempotent `sendDue()` (row-level `sent_at`, `for update skip locked`), so overlapping triggers never
+double-send.
+
+| Layer | What wakes it | Precision | Cost |
+| --- | --- | --- | --- |
+| **Due now** | `POST /api/reminders` / snooze / test with something already due | immediate | one request |
+| **Near-term timer** | the same request stays alive (Vercel `waitUntil`, `maxDuration` 300) until a reminder due within 4.5 min | on the second | memory-seconds only while waiting |
+| **QStash (optional)** | one delayed call per fire minute (`server/qstash.js`) | on the minute, any distance | free: 1,000 messages/day; DB wakes only at fire times |
+| **GitHub cron backstop** | `7,27,47 * * * *`, fails loudly on non-200 | 0-20+ min | ~3 wakes/hour |
+| **On device** | Steady open or alive in the background: one-shot timer + 20 s sweep, now also a system notification in the foreground | exact | none |
+
+Delivery health: `GET /api/reminders/status` (devices, last successful delivery, queued count, trigger mode), shown under
+You → Reminders. "Test with app closed" queues a real reminder 30 s out through the whole pipeline.
+
+Notification actions: **Done** (marks the task done, with Undo) and **Snooze 10 min** (server row `<key>~snooze`, so a device
+re-mirroring the original can never undo or duplicate the snooze; falls back to moving the reminder on-device when signed out).
+
+## What comparable apps do (research, 2026-10-20)
+
+- **Todoist, Google Tasks, Microsoft To Do**: reminders are owned by the server and delivered by FCM/APNs to every device; the
+  native apps also register the next alarms locally so they fire offline. Web clients get Web Push.
+- **TickTick, Things, Due**: on-device exact alarms (Android `AlarmManager.setExactAndAllowWhileIdle`, iOS
+  `UNNotificationRequest`), plus "nag until done" (Due, TickTick constant reminder), snooze presets in the notification, and a
+  daily summary at a chosen time.
+- **Common to the best ones**: one id per reminder across devices (no duplicates), actions in the notification (Done / Snooze),
+  quiet hours, a morning digest, and reminders relative to context (location, "when I'm free").
+
+A PWA cannot schedule exact local notifications (the Notification Triggers origin trial ended without shipping), so the web
+equivalent is **server-timed Web Push** plus the on-device timer while alive, which is what v1.3.1 does. The step that matches
+TickTick/Due exactly is a thin native shell (TWA or Capacitor) that adds on-device exact alarms; see ROADMAP v3.
+
+## Before v1.3.1 (kept for reference)
+
+
 ## Today (v1.2) — three paths, all keyed by a stable id per reminder (`st-<taskId>`, `st-checkin-YYYYMMDD`)
 
 | Path | When it works | Precision | Notes |

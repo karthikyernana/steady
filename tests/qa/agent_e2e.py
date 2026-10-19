@@ -50,13 +50,13 @@ with sync_playwright() as p:
     rec('listening state with live waveform', a.locator('.vx-wave').count() == 1)
     if a.locator('[data-testid=vx-stop]').count(): a.click('[data-testid=vx-stop]')
     t0 = time.time()
-    try: a.wait_for_selector('.dcard', timeout=15000)
+    try: a.wait_for_selector('.dcard[data-type]', timeout=15000)
     except Exception:
         print('STATE', a.evaluate("JSON.stringify(window.__steadyVoice.last)"), a.evaluate("document.querySelector('#vx')?.dataset.state"), a.inner_text('[data-testid=voice-sheet]')[:400]); print(errs); raise
     lat = time.time() - t0
     said = a.input_value('#vx-said')
     rec('transcript shown and editable', 'lunch' in said, said)
-    types = a.eval_on_selector_all('.dcard', 'els => els.map(e => e.dataset.type)')
+    types = a.eval_on_selector_all('.dcard[data-type]', 'els => els.map(e => e.dataset.type)')
     rec('one utterance → several drafts (money + complete + reminder)', types == ['money', 'complete', 'reminder'], f'{types} in {lat:.1f}s (mock)')
     eff = a.inner_text('.dcard[data-type=complete] [data-effect]')
     rec('draft shows the matched existing task', 'DSA: 2 problems' in eff, eff)

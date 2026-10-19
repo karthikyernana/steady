@@ -1,6 +1,6 @@
-import { load, onChange, meta, local, setLocal, all } from './data/store.js';
+import { load, onChange, meta, local, setLocal, all, get, save } from './data/store.js';
 import { I } from './ui/icons.js';
-import { esc, debounce, ago } from './core/util.js';
+import { esc, debounce, ago, dateKey, pad } from './core/util.js';
 import { actions, setRerender, requestRender, toast, sheetOpen } from './ui/ui.js';
 import { renderToday, mountToday, openCheckin } from './ui/views/today.js';
 import { renderGoals } from './ui/views/goals.js';
@@ -233,6 +233,17 @@ setInterval(() => { if (document.visibilityState === 'visible') syncIfStale(28e3
 let lastDay = new Date().toDateString();
 setInterval(() => { const d = new Date().toDateString(); if (d !== lastDay) { lastDay = d; scheduleRender(); reconcileNtfy(); } }, 60e3);
 
+// Actions from a reminder notification (sw.js). Done = mark it done (undo in the toast). Snooze without the server (signed
+// out, or offline) = move the reminder 10 minutes from now on this device.
+async function taskAction(type, id) {
+  const t = id && get('tasks', id); if (!t) return;
+  const prev = { ...t };
+  if (type === 'task-done') await save('tasks', { ...t, status: 'done', doneAt: Date.now() });
+  else { const d = new Date(Date.now() + 10 * 60e3); await save('tasks', { ...t, dueDate: dateKey(d), dueTime: `${pad(d.getHours())}:${pad(d.getMinutes())}`, reminder: true }); }
+  reconcileNtfy();
+  toast(type === 'task-done' ? `Done: ${t.title}` : `Snoozed 10 min: ${t.title}`, { undo: () => save('tasks', prev).then(() => reconcileNtfy()) });
+}
+
 // ---------- boot ----------
 async function boot() {
   if ('serviceWorker' in navigator) {
@@ -243,7 +254,10 @@ async function boot() {
     // a new version took over: reload once so code and cache always match
     let reloaded = false;
     navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController && !reloaded) { reloaded = true; location.reload(); } });
-    navigator.serviceWorker.addEventListener('message', e => { if (e.data?.type === 'open-checkin') openCheckin(); });
+    navigator.serviceWorker.addEventListener('message', e => {
+      if (e.data?.type === 'open-checkin') openCheckin();
+      else if (e.data?.type === 'task-done' || e.data?.type === 'task-snooze') taskAction(e.data.type, e.data.id);
+    });
   }
   await load();
   applyTheme();
@@ -251,8 +265,10 @@ async function boot() {
   render();
   if (cloudReady()) { syncNow('open'); checkSession(); if (permission() === 'granted') enablePush().catch(() => {}); }
   reconcileNtfy();
-  startLocalScheduler(t => toast(`Now: ${t.title}`, { ms: 8000 }));
+  startLocalScheduler(t => toast(`Now: ${t.title}`, { ms: 10000, undo: null }));
   if (location.search.includes('checkin')) openCheckin();
+  const q = new URLSearchParams(location.search);
+  if (q.get('done') || q.get('snooze')) { await taskAction(q.get('done') ? 'task-done' : 'task-snooze', q.get('done') || q.get('snooze')); history.replaceState(null, '', location.pathname + location.hash); }
   document.documentElement.classList.add('ready');
 }
 boot();
