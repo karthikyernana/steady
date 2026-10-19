@@ -1,0 +1,26 @@
+{
+  "name": "steady",
+  "version": "1.1.0",
+  "private": true,
+  "description": "Steady: a calm, adaptive, local-first personal tracker PWA.",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "serve": "python3 -m http.server 8765",
+    "test": "TZ=Asia/Kolkata node --test tests/unit/*.test.mjs",
+    "test:e2e": "python3 tests/e2e.py",
+    "check": "node tests/check-shell.mjs",
+    "dev": "node scripts/dev-server.mjs",
+    "build": "node scripts/build.mjs",
+    "test:api": "node --test tests/api/*.test.mjs",
+    "test:sql": "bash tests/sql/run.sh",
+    "migrate": "node scripts/migrate.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "pg": "^8.13.1",
+    "web-push": "^3.6.7"
+  }
+}

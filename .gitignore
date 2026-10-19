@@ -1,0 +1,8 @@
+node_modules/
+tests/shots/
+tests/results*.json
+tests/unit-results.txt
+tests/export-sample.json
+.DS_Store
+.vercel/
+dist/

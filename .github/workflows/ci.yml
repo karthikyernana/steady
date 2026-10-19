@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm test
+      - run: npm run check
+
+  e2e:
+    needs: unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TZ: Asia/Kolkata
+      # internet-dependent suites (ntfy, realsync) run locally, not in CI
+      SUITES: core-mobile-light core-mobile-dark core-small-light core-small-dark core-desktop-light core-desktop-dark screens export offline notif sync pairlink pwa
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - name: Install Playwright + axe-core
+        run: |
+          pip install "playwright==1.49.1"
+          python -m playwright install --with-deps chromium
+          mkdir -p /tmp/axe && cd /tmp/axe && npm pack axe-core@4 && tar xzf axe-core-*.tgz
+      - name: Serve app at /steady/ (same path as GitHub Pages)
+        run: |
+          mkdir -p /tmp/srv && ln -s "$GITHUB_WORKSPACE" /tmp/srv/steady
+          cd /tmp/srv && nohup python -m http.server 8765 >/tmp/srv.log 2>&1 &
+          sleep 1 && curl -sf http://localhost:8765/steady/ >/dev/null
+      - name: End-to-end suites
+        run: bash tests/run_all.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-screenshots
+          path: tests/shots/
+          retention-days: 7
