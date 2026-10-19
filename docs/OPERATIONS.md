@@ -20,6 +20,15 @@
 | `MIGRATE_SECRET` | us | `POST /api/admin/migrate` (manual migration trigger). |
 | `SIGNUP_MODE` (optional) | you | `open` (default) or `owners`; with `owners`, only `OWNER_EMAILS` can sign up. |
 | `GOOGLE_CLIENT_ID` (optional) | you | Enables “Continue with Google”. |
+| `SARVAM_API_KEY` | you | Voice: speech-to-text (Saaras v3). Also the LLM fallback (`sarvam-105b`) when Gemini is unset or down. Without it the mic falls back to typing. |
+| `GEMINI_API_KEY` | you | Voice agent's primary planner (Gemini REST, strict JSON schema). Without it Sarvam plans; without both, a rules planner does. |
+| `GEMINI_MODEL` (optional) | you | Default `gemini-3.8-flash`. `GEMINI_THINKING`: `low` (default) / `minimal` / `off`. |
+| `SARVAM_STT_MODEL`, `SARVAM_STT_MODE`, `SARVAM_STT_LANGUAGE` (optional) | you | Defaults `saaras:v3`, `codemix`, `unknown` (auto-detect). |
+| `SARVAM_LLM_MODEL`, `SARVAM_JSON_MODE` (optional) | you | Defaults `sarvam-105b`, `object` (JSON mode + shape in prompt; measured 2-4 s). `schema` = strict json_schema (slower). `AGENT_SARVAM_LLM=off` disables the Sarvam LLM fallback. |
+| `AGENT_DAILY_LIMIT` (optional) | you | Per-user daily cap for transcriptions and plans (default 200 each). |
+| `AGENT_GLOBAL_DAILY_LIMIT` (optional) | you | All-users daily ceiling per kind (default 3000), so open sign-ups cannot multiply the AI bill. |
+| `QSTASH_TOKEN`, `QSTASH_URL`, `PUBLIC_URL` (optional) | you | Exact-minute reminder wake-ups via Upstash QStash; needs `CRON_SECRET` too. See docs/NOTIFICATIONS.md. |
+| `REMINDER_EARLY_MS` (optional) | you | How early a push may be sent (default 150000, or 20000 when QStash is on). |
 
 Retired in v1.2 (removed): `SETUP_CODE`, `ALLOWED_EMAIL`, `OWNER_EMAILS` (no longer needed while sign-ups are open).
 
@@ -30,6 +39,14 @@ Retired in v1.2 (removed): `SETUP_CODE`, `ALLOWED_EMAIL`, `OWNER_EMAILS` (no lon
 3. New client files must be listed in `sw.js` `SHELL` (`npm run check` fails otherwise).
 4. Schema change → new file `db/migrations/NNNN_name.sql` (never edit an applied one). It runs on deploy.
 5. Commit to `main`, tag the release, deploy to Vercel production, verify `/api/config` and the app on phone + desktop.
+
+## Releasing 1.3 (Money + voice agent) — checklist
+
+1. Vercel env: `SARVAM_API_KEY`, `GEMINI_API_KEY` (Production + Preview). Optional: QStash trio + `CRON_SECRET`.
+2. `vercel.json` now sends `Permissions-Policy: microphone=(self)` (was `microphone=()`, which blocks the mic) and bundles `js/core/**` into the API function (the server imports the shared agent core).
+3. Migration `0006_money_agent.sql` runs on deploy (records `coll` check + `agent_memory` + `agent_usage`, all RLS). `0007_agent_usage_total.sql` adds the all-users counter (no user data, no RLS).
+4. Data contract moves to schemaVersion 2: open the new version on every device once; a 1.2 device shows "update this device" until it reloads.
+5. Bump `package.json` + `APP_VERSION` to 1.3.0 and date the CHANGELOG entry at release time.
 
 ## Common tasks
 

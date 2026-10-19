@@ -1,6 +1,7 @@
 // Demo/test data: 30 days of realistic history with learnable patterns. Not loaded in normal use.
 import { putRaw, uid, emitExternal, setMeta, meta, all } from './store.js';
 import { todayKey, keyAdd, fromKey } from '../core/util.js';
+import { tagsIn } from '../core/text.js';
 
 function rng(seed) { let s = seed; return () => (s = (s * 16807) % 2147483647) / 2147483647; }
 
@@ -49,7 +50,7 @@ export async function seed(days = 30, { seed: sd = 7 } = {}) {
     }
     if (r() < 0.4) thoughts.push({ id: uid(), text: ['Idea: an n8n template store for Indian D2C brands #idea #startup', 'Founders reply more to short DMs with one clear ask. #sales', 'Felt scattered today; too many tabs. #reflection', 'Agent that drafts LinkedIn posts from my GitHub commits #idea #ai', 'Placement season is noisy. Keep the main thing the main thing. #focus'][Math.floor(r() * 5)], tags: [], mood: 1 + Math.floor(r() * 5), kind: r() < 0.5 ? 'idea' : 'note', createdAt: d.getTime() + 15 * 3600e3, updatedAt: d.getTime() + 15 * 3600e3 });
   }
-  for (const t of thoughts) t.tags = [...new Set((t.text.match(/#[\w-]+/g) || []).map(x => x.slice(1)))];
+  for (const t of thoughts) t.tags = tagsIn(t.text);
   // today
   tasks.push(
     { id: uid(), title: 'Post on LinkedIn', durationMin: 20, goalId: 'g-client', priority: 2, dueDate: tk, dueTime: '18:00', reminder: true, status: 'open', createdAt: now, updatedAt: now },
@@ -70,6 +71,21 @@ export async function seed(days = 30, { seed: sd = 7 } = {}) {
     if (!(mine.milestones || []).length) await putRaw('goals', [{ ...mine, why: mine.why || goals[i].why, milestones: goals[i].milestones, actions: (mine.actions || []).length ? mine.actions : goals[i].actions, updatedAt: Date.now() }]);
     goals.splice(i, 1);
   }
+  // money: a student month in INR (Steady 1.3)
+  const money = [];
+  const spend = [['Lunch', 'Food', 'Swiggy', 140, 260], ['Chai and snacks', 'Food', null, 20, 60], ['Auto', 'Transport', 'Rapido', 40, 120], ['Groceries', 'Groceries', 'Blinkit', 180, 520],
+    ['Recharge', 'Bills', 'Jio', 299, 299], ['Notes printout', 'Education', null, 30, 90], ['Movie', 'Entertainment', null, 180, 250], ['T-shirt', 'Shopping', 'Myntra', 399, 799]];
+  for (let i = Math.min(days, 40); i >= 0; i--) {
+    const k = keyAdd(tk, -i), ts = fromKey(k).getTime() + 13 * 3600e3;
+    const n = r() < 0.2 ? 0 : 1 + Math.floor(r() * 2);
+    for (let j = 0; j < n; j++) {
+      const [note, category, payee, lo, hi] = spend[Math.min(spend.length - 1, Math.floor(r() * r() * spend.length * 1.4))];
+      money.push({ id: uid(), kind: 'expense', amount: Math.round((lo + r() * (hi - lo)) / 10) * 10, category, payee, note, date: k, source: r() < 0.4 ? 'voice' : 'typed', createdAt: ts + j, updatedAt: ts + j });
+    }
+    if (fromKey(k).getDate() === 1) money.push({ id: uid(), kind: 'income', amount: 6000, category: 'Stipend', payee: 'Home', note: 'Monthly from home', date: k, source: 'typed', createdAt: ts, updatedAt: ts });
+  }
+  money.push({ id: uid(), kind: 'income', amount: 2500, category: 'Freelance', payee: 'Client', note: 'Landing page fix', date: keyAdd(tk, -3), source: 'voice', createdAt: now - 3 * 864e5, updatedAt: now - 3 * 864e5 });
+  if (!all('money').length) await putRaw('money', money);
   await putRaw('goals', goals); await putRaw('tasks', tasks); await putRaw('checkins', checkins); await putRaw('thoughts', thoughts);
   emitExternal();
   return { tasks: tasks.length, checkins: checkins.length, thoughts: thoughts.length };

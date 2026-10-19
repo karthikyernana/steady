@@ -65,9 +65,24 @@ export function startLocalScheduler(onInApp) {
       await setLocal('firedLocal', fired);
     }
   };
-  tick();
-  timer = setInterval(tick, 20e3);
+  // Precise while Steady is alive: besides the 20 s sweep, arm a one-shot timer for the very next reminder so it fires
+  // on the minute instead of up to 20 s late. Re-armed after every sweep and whenever data changes.
+  let next = null;
+  const arm = () => {
+    clearTimeout(next);
+    const now = Date.now();
+    const ats = all('tasks').map(fireAt).filter(at => at && at > now);
+    const ci = checkinFireAt(todayKey()); if (ci && ci > now) ats.push(ci);
+    const at = Math.min(...ats);
+    if (Number.isFinite(at) && at - now < 6 * 3600e3) next = setTimeout(() => { tick().then(arm); }, at - now + 50);
+  };
+  const run = () => tick().then(arm);
+  run();
+  timer = setInterval(run, 20e3);
+  armLocal = arm;
 }
+let armLocal = () => {};
+export const rearmLocal = () => armLocal();
 
 export function checkinFireAt(dayKey) {
   const s = meta('settings');

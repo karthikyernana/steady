@@ -15,13 +15,18 @@ with sync_playwright() as p:
         iss=pg.evaluate(AUD); report[f'{name}-{scheme}-onb']=iss
         if scheme=='light': pg.screenshot(path=f'{OUT}/{TAG}-{name}-onb.png')
         onboard(pg); pg.evaluate("import('./js/data/demo.js').then(m=>m.seed(30))"); pg.wait_for_timeout(600)
-        for r in ['today','goals','thoughts','insights','you']:
+        for r in ['today','goals','money','thoughts','insights','you']:
             pg.evaluate(f"location.hash='#/{r}'"); pg.wait_for_timeout(700)
             report[f'{name}-{scheme}-{r}']=pg.evaluate(AUD)
             pg.screenshot(path=f'{OUT}/{TAG}-{name}-{scheme}-{r}.png', full_page=(scheme=='light'))
         pg.evaluate("location.hash='#/today'"); pg.wait_for_timeout(600)
         pg.locator('.task .t-main').first.click(); pg.wait_for_timeout(700)
         report[f'{name}-{scheme}-sheet']=pg.evaluate(AUD); pg.screenshot(path=f'{OUT}/{TAG}-{name}-{scheme}-sheet.png')
+        pg.keyboard.press('Escape'); pg.wait_for_timeout(500)
+        # voice agent sheet (signed out here, so the typing fallback) with draft cards
+        pg.click('#mic-fab'); pg.wait_for_selector('#vx-text')
+        pg.fill('#vx-text', 'spent 250 on lunch at swiggy, finished DSA problems and remind me to call amma tomorrow at 6pm'); pg.click('[data-testid=vx-understand]'); pg.wait_for_selector('.dcard'); pg.wait_for_timeout(500)
+        report[f'{name}-{scheme}-voice']=pg.evaluate(AUD); pg.screenshot(path=f'{OUT}/{TAG}-{name}-{scheme}-voice.png')
         c.close()
     b.close()
 for k,v in report.items():

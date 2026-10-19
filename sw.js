@@ -1,17 +1,22 @@
 // Steady service worker: offline app shell (network-first, cache fallback) + Web Push + notification clicks.
-const VERSION = 'steady-v1.0.0';
+const VERSION = 'steady-v1.3.0';
 const SHELL = [
   './',
   './index.html',
   './manifest.webmanifest',
   './css/app.css',
+  './css/styles.css',
   './js/app.js',
+  './js/core/agent.js',
   './js/core/engine.js',
   './js/core/merge.js',
+  './js/core/money.js',
   './js/core/parse.js',
   './js/core/schema.js',
+  './js/core/text.js',
   './js/core/util.js',
   './js/core/voice.js',
+  './js/data/agent.js',
   './js/data/backup.js',
   './js/data/insights.js',
   './js/data/store.js',
@@ -21,8 +26,10 @@ const SHELL = [
   './js/ui/icons.js',
   './js/ui/motion.js',
   './js/ui/ui.js',
+  './js/ui/voice.js',
   './js/ui/views/goals.js',
   './js/ui/views/insights.js',
+  './js/ui/views/money.js',
   './js/ui/views/onboarding.js',
   './js/ui/views/settings.js',
   './js/ui/views/thoughts.js',
@@ -30,6 +37,13 @@ const SHELL = [
   './fonts/inter-latin-wght-normal.woff2',
   './fonts/instrument-serif-latin-400-normal.woff2',
   './fonts/instrument-serif-latin-400-italic.woff2',
+  './fonts/schibsted-grotesk-latin-wght-normal.woff2',
+  './fonts/ibm-plex-mono-latin-500-normal.woff2',
+  './fonts/young-serif-latin-400-normal.woff2',
+  './fonts/figtree-latin-wght-normal.woff2',
+  './fonts/newsreader-latin-400-normal.woff2',
+  './fonts/newsreader-latin-400-italic.woff2',
+  './fonts/hanken-grotesk-latin-wght-normal.woff2',
   './icons/icon.svg',
   './icons/icon-192.png',
   './icons/icon-512.png',
@@ -69,7 +83,7 @@ self.addEventListener('push', e => {
   try { d = e.data ? e.data.json() : {}; } catch { d = { title: 'Steady', body: e.data && e.data.text() }; }
   e.waitUntil(self.registration.showNotification(d.title || 'Steady', {
     body: d.body || '', tag: d.tag || 'steady', renotify: true, icon: './icons/icon-192.png', badge: './icons/badge-96.png',
-    data: { url: d.url || './#/today' },
+    data: { url: d.url || './#/today' }, timestamp: d.at || Date.now(),
   }));
 });
 

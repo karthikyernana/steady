@@ -1,5 +1,6 @@
 import { all, get, save, remove, uid } from '../../data/store.js';
 import { dateKey, fmtDateKey, fmtTime, pad, esc } from '../../core/util.js';
+import { tagsIn, linkTags } from '../../core/text.js';
 import { I } from '../icons.js';
 import { on, openSheet, toast, segmented, bindSeg, segValue, requestRender } from '../ui.js';
 
@@ -7,8 +8,6 @@ const ui = { q: '', tag: null, mood: 3, kind: 'note' };
 export const MOODS = ['', 'Low', 'Meh', 'Okay', 'Good', 'Great'];
 const KINDS = [['note', 'Note'], ['idea', 'Idea'], ['journal', 'Journal']];
 
-const tagsIn = text => [...new Set((text.match(/#[\p{L}\p{N}_-]+/gu) || []).map(t => t.slice(1).toLowerCase()))];
-const linkTags = text => esc(text).replace(/#([\p{L}\p{N}_-]+)/gu, '<span class="tag">#$1</span>');
 
 export function renderThoughts() {
   const all_ = all('thoughts').sort((a, b) => b.createdAt - a.createdAt);
@@ -17,8 +16,7 @@ export function renderThoughts() {
   const q = ui.q.trim().toLowerCase();
   const list = all_.filter(t => (!ui.tag || (t.tags || []).includes(ui.tag)) && (!q || t.text.toLowerCase().includes(q) || (t.tags || []).some(g => g.includes(q.replace('#', '')))));
 
-  let html = `<div class="page-head"><div><div class="eyebrow">Thoughts</div><h1 class="display">Catch it <em>before it's gone</em>.</h1>
-    <p class="sub">Ideas, notes, a line about the day. Add #tags to find them later.</p></div></div>
+  let html = `<div class="page-head"><div><div class="eyebrow">Thoughts</div><h1 class="display">Catch it <em>before it's gone</em>.</h1></div></div>
   <form class="card capture" id="tf-cap">
     <textarea id="th-text" data-keep rows="3" placeholder="What's on your mind? #idea #startup" aria-label="New thought"></textarea>
     <div class="capture-bar">
@@ -33,7 +31,7 @@ export function renderThoughts() {
   ${tagCounts.size ? `<div class="tag-row">${[...tagCounts].sort((a, b) => b[1] - a[1]).slice(0, 14).map(([t, n]) => `<button class="chip-btn sm ${ui.tag === t ? 'on' : ''}" data-act="th-tag" data-tag="${esc(t)}">#${esc(t)} <small>${n}</small></button>`).join('')}</div>` : ''}`;
 
   if (!all_.length) {
-    html += `<section class="empty"><p class="serif big">Nothing here yet.</p><p class="muted">The best ideas arrive at bad times. Drop them here; I'll keep them.</p></section>`;
+    html += `<section class="empty"><p class="serif big">Nothing here yet.</p><p class="muted">Drop ideas here. Add #tags to find them later.</p></section>`;
     return html;
   }
   if (!list.length) return html + `<section class="empty small"><p class="muted">No thoughts match${q ? ` “${esc(ui.q)}”` : ''}${ui.tag ? ` in #${esc(ui.tag)}` : ''}.</p></section>`;

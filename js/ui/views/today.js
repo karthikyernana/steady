@@ -100,7 +100,7 @@ export function renderToday() {
       <div class="prompt-icon">${I.leaf}</div>
       <div class="prompt-body">
         <h2 class="prompt-title">${esc(a.slump.text)} Let's make today small.</h2>
-        <p class="muted">A minimum viable day: just ${Math.min(3, open.length) || 2} tiny things. Everything else waits, no guilt.</p>
+        <p class="muted">Just ${Math.min(3, open.length) || 2} tiny things. The rest waits.</p>
         <div class="row gap wrap"><button class="btn primary sm" data-act="mvd-on">Make it a small day</button><button class="btn ghost sm" data-act="mvd-dismiss">I'm good</button></div>
       </div></section>`;
   } else if (a.slump && !mvdOn && !open.length && !todays.length) {
@@ -126,7 +126,7 @@ export function renderToday() {
   const ci = all('checkins').find(c => c.date === tk);
   if (isCheckinTime() && !ci) {
     html += `<section class="card checkin-cta" data-testid="checkin-cta">
-      <div><div class="eyebrow">Evening check-in</div><h2 class="serif">How did today feel?</h2><p class="muted">Energy, one win, one thing you did for yourself. Under a minute.</p></div>
+      <div><div class="eyebrow">Evening check-in</div><h2 class="serif">How did today feel?</h2><p class="muted">Energy, one win, one kind thing. A minute.</p></div>
       <button class="btn primary" data-act="checkin">Check in</button></section>`;
   }
 
@@ -149,7 +149,7 @@ export function renderToday() {
     const acts = all('goals').flatMap(g => (g.actions || []).slice(0, 2).map(x => ({ g, x }))).slice(0, 4);
     html += `<section class="empty" data-testid="empty-today">
       <p class="serif big">A clear page.</p>
-      <p class="muted">What's one small thing that would make today count?</p>
+      <p class="muted">Add one small thing above.</p>
       ${acts.length ? `<div class="row gap wrap center">${acts.map(({ g, x }) => `<button class="chip-btn" data-act="add-action" data-goal="${g.id}" data-title="${esc(x.title)}">${I.plus}<span>${esc(x.title)}</span></button>`).join('')}</div>` : ''}
     </section>`;
   } else {

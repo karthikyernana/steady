@@ -3,7 +3,7 @@
 // Deletes become tombstones {id, deleted:true, updatedAt} so they merge across devices.
 
 const DB_NAME = 'steady';
-const DB_VERSION = 1;
+const DB_VERSION = 2; // v2 (Steady 1.3): adds the `money` store
 import { COLLECTIONS, SCHEMA_VERSION, migrateCollections, normalize } from '../core/schema.js';
 export const SYNCED = COLLECTIONS;
 const STORES = [...SYNCED, 'local'];
@@ -41,7 +41,7 @@ const idbPutMany = (store, recs) => run(store, 'readwrite', s => { for (const r 
 const idbClear = store => run(store, 'readwrite', s => s.clear());
 
 // ---------- in-memory state ----------
-export const S = { tasks: new Map(), goals: new Map(), thoughts: new Map(), checkins: new Map(), meta: new Map(), local: {} };
+export const S = { tasks: new Map(), goals: new Map(), thoughts: new Map(), checkins: new Map(), meta: new Map(), money: new Map(), local: {} };
 
 const listeners = new Set();
 export function onChange(fn) { listeners.add(fn); return () => listeners.delete(fn); }

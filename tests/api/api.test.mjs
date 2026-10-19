@@ -71,15 +71,18 @@ else {
 
   test('config is public and reveals no secrets', async () => {
     const r = await call('GET', 'config');
-    assert.equal(r.status, 200); assert.equal(r.body.googleClientId, 'test-client'); assert.equal(r.body.passphrase, true);
-    assert.ok(!JSON.stringify(r.body).includes(process.env.VAPID_PRIVATE_KEY));
+    assert.equal(r.status, 200); assert.equal(r.body.googleClientId, 'test-client'); assert.equal(r.body.accounts, true); assert.equal(r.body.signup, 'open');
+    assert.ok(!('passphrase' in r.body) && !('setup' in r.body), 'v1.1 passphrase/setup flags are retired');
+    for (const k of ['VAPID_PRIVATE_KEY', 'CRON_SECRET', 'MIGRATE_SECRET']) assert.ok(!JSON.stringify(r.body).includes(process.env[k]), k);
   });
   test('signed-out requests are refused', async () => {
     assert.equal((await call('GET', 'sync/pull')).status, 401);
     assert.equal((await call('POST', 'sync/push', { records: [] })).status, 401);
   });
-  test('Google sign-in: other emails, wrong audience, bad signature and expired tokens are rejected', async () => {
-    assert.equal((await call('POST', 'auth/google', { credential: idToken({ email: 'someone@gmail.com' }) }, { jar: false })).status, 403);
+  test('Google sign-in: closed sign-ups, wrong audience, bad signature and expired tokens are rejected', async () => {
+    process.env.SIGNUP_MODE = 'owners';   // v1.2: the allow-list is SIGNUP_MODE=owners + OWNER_EMAILS, enforced by the API
+    try { assert.equal((await call('POST', 'auth/google', { credential: idToken({ email: 'someone@gmail.com' }) }, { jar: false })).status, 403); }
+    finally { delete process.env.SIGNUP_MODE; }
     assert.equal((await call('POST', 'auth/google', { credential: idToken({ email: OWNER, aud: 'evil' }) }, { jar: false })).status, 401);
     const other = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey;
     assert.equal((await call('POST', 'auth/google', { credential: idToken({ email: OWNER }, 'k1', other) }, { jar: false })).status, 401);
@@ -107,9 +110,16 @@ else {
     assert.equal((await call('POST', 'sync/push', { records: [{ coll: 'evil', id: 'x', updatedAt: 1, data: {} }] })).status, 400);
     assert.equal((await call('POST', 'sync/push', { records: [] }, { csrf: false })).status, 403);
   });
-  test('database refuses non-allowlisted owners even if the API were bypassed', async () => {
-    const { query } = await import('../../server/db.js');
-    await assert.rejects(query("insert into owners (email) values ('intruder@example.com')"), /private/);
+  test('closed sign-ups (SIGNUP_MODE=owners) refuse new emails but keep owners in', async () => {
+    const { query } = await import('../../server/db.js'); await query('delete from login_attempts');
+    process.env.SIGNUP_MODE = 'owners';
+    try {
+      const chk = await call('POST', 'auth/check', { email: 'intruder@example.com' }, { jar: false });
+      assert.equal(chk.status, 200); assert.equal(chk.body.exists, false); assert.equal(chk.body.canCreate, false);
+      assert.equal((await call('POST', 'auth/signup', { email: 'intruder@example.com', password: 'long enough 123' }, { jar: false })).status, 403);
+      assert.equal((await query("select count(*)::int n from owners where email = 'intruder@example.com'")).rows[0].n, 0, 'no row created');
+      assert.equal((await call('POST', 'auth/check', { email: OWNER }, { jar: false })).body.canCreate !== undefined, true);
+    } finally { delete process.env.SIGNUP_MODE; }
   });
   test('row-level security hides data from any other owner scope', async () => {
     const { withOwner, query } = await import('../../server/db.js');
@@ -122,27 +132,35 @@ else {
     await assert.rejects(withOwner(rows[0].id, c => c.query(`insert into records (owner_id, coll, id, updated_at, data) select id, 'tasks', 'spoof', 1, '{}' from owners where email = $1`, [OWNER])), /row-level security/);
     await query("delete from owners where email = 'second@example.com'"); await query("delete from allowed_emails where email = 'second@example.com'");
   });
-  test('one-time setup code sets the owner passphrase exactly once', async () => {
-    assert.equal((await call('GET', 'config')).body.setup, true);
-    assert.equal((await call('POST', 'auth/setup', { code: 'wrong-code-000000', passphrase: 'my new passphrase' }, { jar: false })).status, 401);
-    assert.equal((await call('POST', 'auth/setup', { code: 'setup-code-0123456789', passphrase: 'short' }, { jar: false })).status, 400);
-    const ok = await call('POST', 'auth/setup', { code: 'setup-code-0123456789', passphrase: 'my new passphrase' }, { jar: false });
-    assert.equal(ok.status, 200); assert.match(ok.setCookie, /HttpOnly/);
-    assert.equal((await call('POST', 'auth/setup', { code: 'setup-code-0123456789', passphrase: 'another passphrase' }, { jar: false })).status, 410, 'cannot be replayed');
-    assert.equal((await call('GET', 'config')).body.setup, false);
-    assert.equal((await call('POST', 'auth/passphrase', { passphrase: 'my new passphrase' }, { jar: false })).status, 200, 'DB passphrase works');
+  test('email + password sign-up: validation, no duplicates, httpOnly session', async () => {
+    const { query } = await import('../../server/db.js'); await query('delete from login_attempts');
+    const email = 'new.user@example.com';
+    assert.equal((await call('POST', 'auth/signup', { email: 'not-an-email', password: 'long enough 123' }, { jar: false })).status, 400);
+    assert.equal((await call('POST', 'auth/signup', { email, password: 'short' }, { jar: false })).status, 400);
+    assert.equal((await call('POST', 'auth/signup', { email, password: 'x'.repeat(201) }, { jar: false })).status, 400);
+    assert.equal((await call('POST', 'auth/signup', { email, password: 'long enough 123' }, { csrf: false, jar: false })).status, 403, 'needs CSRF header');
+    assert.deepEqual((await call('POST', 'auth/check', { email }, { jar: false })).body, { exists: false, canCreate: true });
+    const ok = await call('POST', 'auth/signup', { email: 'New.User@Example.com ', password: 'long enough 123', name: 'New' }, { jar: false });
+    assert.equal(ok.status, 200); assert.equal(ok.body.email, email); assert.match(ok.setCookie, /HttpOnly/);
+    assert.equal((await call('POST', 'auth/signup', { email, password: 'another one 456' }, { jar: false })).status, 409, 'no takeover of an existing account');
+    assert.equal((await call('POST', 'auth/check', { email }, { jar: false })).body.exists, true);
+    const { rows } = await query('select password_hash from owners where email = $1', [email]);
+    assert.ok(rows[0].password_hash && !rows[0].password_hash.includes('long enough'), 'password stored hashed');
   });
   test('admin migrate route is secret-protected and idempotent', async () => {
     assert.equal((await call('POST', 'admin/migrate', {}, { auth: 'Bearer nope', jar: false })).status, 401);
     const r = await call('POST', 'admin/migrate', {}, { auth: 'Bearer migrate-secret-0123456789', jar: false });
     assert.equal(r.status, 200); assert.deepEqual(r.body.applied, []);
   });
-  test('passphrase sign-in works and is rate limited', async () => {
+  test('password sign-in works and is rate limited', async () => {
     const { query } = await import('../../server/db.js'); await query('delete from login_attempts');
-    await query(`update owner_credentials set passphrase_hash = $1`, [process.env.OWNER_PASSPHRASE_HASH]);
-    assert.equal((await call('POST', 'auth/passphrase', { passphrase: 'correct horse battery staple' }, { jar: false })).status, 200);
-    for (let i = 0; i < 5; i++) assert.equal((await call('POST', 'auth/passphrase', { passphrase: 'wrong wrong wrong' }, { jar: false })).status, 401);
-    assert.equal((await call('POST', 'auth/passphrase', { passphrase: 'correct horse battery staple' }, { jar: false })).status, 429);
+    const email = 'new.user@example.com';
+    const ok = await call('POST', 'auth/login', { email, password: 'long enough 123' }, { jar: false });
+    assert.equal(ok.status, 200); assert.match(ok.setCookie, /HttpOnly/);
+    assert.equal((await call('POST', 'auth/login', { email: 'nobody@example.com', password: 'long enough 123' }, { jar: false })).status, 401, 'unknown email: same answer');
+    for (let i = 0; i < 4; i++) assert.equal((await call('POST', 'auth/login', { email, password: 'wrong wrong wrong' }, { jar: false })).status, 401);
+    assert.equal((await call('POST', 'auth/login', { email, password: 'long enough 123' }, { jar: false })).status, 429);
+    await query('delete from login_attempts');
   });
   test('Web Push: subscribe, schedule, cron sends once, prunes dead endpoints', async () => {
     const ecdh = createECDH('prime256v1'); ecdh.generateKeys();

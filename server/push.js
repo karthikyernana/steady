@@ -2,7 +2,10 @@
 import webpush from 'web-push';
 import { query, withOwner } from './db.js';
 
-const EARLY_MS = 150_000;   // cron runs every ~5 min: send up to 2.5 min early rather than up to 5 min late
+// How early a reminder may go out. With only the 5-minute GitHub cron, sending up to 2.5 min early beats up to 5 min late.
+// With a precise trigger (QStash per reminder, or a 1-minute cron) keep it small. Override with REMINDER_EARLY_MS.
+const EARLY_MS_DEFAULT = () => (process.env.QSTASH_TOKEN ? 20_000 : 150_000);
+const earlyMs = () => (Number.isFinite(+process.env.REMINDER_EARLY_MS) && process.env.REMINDER_EARLY_MS !== '' ? +process.env.REMINDER_EARLY_MS : EARLY_MS_DEFAULT());
 const LATE_MS = 30 * 60e3;  // never send something more than 30 min stale
 
 export function vapidReady() {
@@ -21,12 +24,12 @@ export async function sendDue(now = new Date()) {
       const { rows: due } = await c.query(
         `select key, fire_at, title, body, url, tag from scheduled_notifications
           where owner_id = app_owner() and sent_at is null and fire_at <= $1 and fire_at >= $2 order by fire_at limit 200 for update skip locked`,
-        [new Date(now.getTime() + EARLY_MS), new Date(now.getTime() - LATE_MS)]);
+        [new Date(now.getTime() + earlyMs()), new Date(now.getTime() - LATE_MS)]);
       if (!due.length) return;
       const { rows: subs } = await c.query('select id, endpoint, p256dh, auth from push_subscriptions where owner_id = app_owner()');
       for (const n of due) {
         report.due++;
-        const payload = JSON.stringify({ title: n.title, body: n.body, url: n.url || '/#/today', tag: n.tag || n.key });
+        const payload = JSON.stringify({ title: n.title, body: n.body, url: n.url || '/#/today', tag: n.tag || n.key, at: new Date(n.fire_at).getTime() });
         for (const s of subs) {
           try {
             await webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, payload, { TTL: 900, urgency: 'high', timeout: 8000 });

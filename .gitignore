@@ -7,3 +7,4 @@ tests/export-sample.json
 .vercel/
 dist/
 tests/qa/shots/
+qa-shots/

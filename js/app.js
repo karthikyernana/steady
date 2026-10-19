@@ -5,20 +5,26 @@ import { actions, setRerender, requestRender, toast, sheetOpen } from './ui/ui.j
 import { renderToday, mountToday, openCheckin } from './ui/views/today.js';
 import { renderGoals } from './ui/views/goals.js';
 import { renderThoughts, mountThoughts } from './ui/views/thoughts.js';
+import { renderMoney, mountMoney } from './ui/views/money.js';
+import { micButton, mountMic, openVoice } from './ui/voice.js';
 import { renderInsights, insightsForExport } from './ui/views/insights.js';
 import { renderSettings, mountSettings, openSignIn } from './ui/views/settings.js';
 import { renderOnboarding, mountOnboarding, mark } from './ui/views/onboarding.js';
 import { syncNow, onStatus, initStatus, cloudReady, getStatus, markDirty, checkSession, startLive } from './data/sync.js';
 import * as motion from './ui/motion.js';
-import { startLocalScheduler, reconcileNtfy, reconcileRemote, enablePush, requestPermission, permission } from './platform/notify.js';
+import { startLocalScheduler, reconcileNtfy, reconcileRemote, enablePush, requestPermission, permission, rearmLocal } from './platform/notify.js';
 
 const ROUTES = {
   today: { label: 'Today', icon: I.today, render: renderToday, mount: mountToday },
   goals: { label: 'Goals', icon: I.goals, render: renderGoals },
+  money: { label: 'Money', icon: I.money, render: renderMoney, mount: mountMoney },
   thoughts: { label: 'Thoughts', icon: I.thoughts, render: renderThoughts, mount: mountThoughts },
   insights: { label: 'Insights', icon: I.insights, render: renderInsights },
-  you: { label: 'You', icon: I.you, render: renderSettings, mount: mountSettings },
+  you: { label: 'You', icon: I.you, render: renderSettings, mount: mountSettings, tab: false }, // opened from the header avatar
 };
+const TABS = Object.entries(ROUTES).filter(([, r]) => r.tab !== false);
+const initial = () => (meta('profile').name || '').trim().charAt(0).toUpperCase() || '';
+const youBtn = (cls, label = '') => `<a href="#/you" data-route="you" class="${cls}" data-testid="you-btn" aria-label="You and settings" title="You and settings"><span class="avatar" aria-hidden="true">${esc(initial()) || I.you}</span>${label}</a>`;
 const route = () => { const r = (location.hash.match(/^#\/(\w+)/) || [])[1]; return ROUTES[r] ? r : 'today'; };
 
 const app = document.getElementById('app');
@@ -31,13 +37,18 @@ function applyTheme() {
   const dark = t === 'dark' || (t === 'system' && mq.matches);
   document.documentElement.dataset.theme = dark ? 'dark' : 'light';
   try { localStorage.setItem('steady-theme', t); } catch { /* private mode */ }
-  document.querySelector('meta[name=theme-color]').setAttribute('content', dark ? '#16150f' : '#FBF8F1');
+  syncThemeColor(dark);
+}
+// browser chrome follows the active style's ground colour (falls back to the liquid palette)
+function syncThemeColor(dark = document.documentElement.dataset.theme === 'dark') {
+  const g = getComputedStyle(document.documentElement).getPropertyValue('--ground').trim();
+  document.querySelector('meta[name=theme-color]').setAttribute('content', g || (dark ? '#16150f' : '#FBF8F1'));
 }
 let lastPointer = null;
 addEventListener('pointerdown', e => { lastPointer = [e.clientX, e.clientY]; }, { capture: true, passive: true });
 window.__applyTheme = () => { const p = lastPointer || []; motion.themeSwap(applyTheme, p[0], p[1]); };
 motion.installCssSprings();
-window.__applyStyle = v => { const p = lastPointer || []; motion.themeSwap(() => { document.documentElement.dataset.style = v; }, p[0], p[1]); };
+window.__applyStyle = v => { const p = lastPointer || []; motion.themeSwap(() => { document.documentElement.dataset.style = v; syncThemeColor(); }, p[0], p[1]); };
 mq.addEventListener?.('change', applyTheme);
 
 // ---------- shell ----------
@@ -46,13 +57,15 @@ function shell() {
   <div class="shell">
     <nav class="side" aria-label="Main">
       <a class="brand" href="#/today">${mark(30)}<span>Steady</span></a>
-      <div class="nav-items"><span class="liquid-ind" aria-hidden="true"><i></i></span>${Object.entries(ROUTES).map(([k, r]) => `<a href="#/${k}" data-route="${k}" class="nav-item">${r.icon}<span>${r.label}</span></a>`).join('')}</div>
-      <div class="side-foot" id="side-sync"></div>
+      <div class="nav-items"><span class="liquid-ind" aria-hidden="true"><i></i></span>${TABS.map(([k, r]) => `<a href="#/${k}" data-route="${k}" class="nav-item">${r.icon}<span>${r.label}</span></a>`).join('')}</div>
+      <div class="side-foot">${youBtn('nav-item you-item', '<span>You</span>')}<div id="side-sync"></div></div>
     </nav>
-    <header class="topbar"><a class="brand" href="#/today">${mark(26)}<span>Steady</span></a><div id="top-sync"></div></header>
+    <header class="topbar"><a class="brand" href="#/today">${mark(26)}<span>Steady</span></a><div class="top-right"><div id="top-sync"></div>${youBtn('you-btn')}</div></header>
     <main id="view" class="view" tabindex="-1"></main>
-    <nav class="tabbar" aria-label="Main"><span class="liquid-ind" aria-hidden="true"><i></i></span>${Object.entries(ROUTES).map(([k, r]) => `<a href="#/${k}" data-route="${k}" class="tab">${r.icon}<span>${r.label}</span></a>`).join('')}</nav>
+    ${micButton()}
+    <nav class="tabbar" aria-label="Main"><span class="liquid-ind" aria-hidden="true"><i></i></span>${TABS.map(([k, r]) => `<a href="#/${k}" data-route="${k}" class="tab">${r.icon}<span>${r.label}</span></a>`).join('')}</nav>
   </div>`;
+  mountMic(app);
 }
 
 function syncChip(st, long) {
@@ -62,6 +75,8 @@ function syncChip(st, long) {
 }
 function paintSync() {
   const st = getStatus();
+  const ini = esc(initial()) || I.you;
+  document.querySelectorAll('[data-testid=you-btn] .avatar').forEach(a => { if (a.innerHTML !== ini) a.innerHTML = ini; });
   const a = document.getElementById('top-sync'), b = document.getElementById('side-sync');
   if (a) a.innerHTML = syncChip(st, false);
   if (b) b.innerHTML = syncChip(st, true);
@@ -139,8 +154,29 @@ document.addEventListener('keydown', e => {
   if (e.key === 'n' && !e.metaKey && !e.ctrlKey && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName) && !sheetOpen()) {
     e.preventDefault(); if (route() !== 'today') location.hash = '#/today'; setTimeout(() => document.getElementById('qa')?.focus(), 50);
   }
+  // "v": the voice agent (same single mic as the floating button)
+  if (e.key === 'v' && !e.metaKey && !e.ctrlKey && !e.altKey && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName) && !sheetOpen() && document.getElementById('mic-fab')) {
+    e.preventDefault(); openVoice();
+  }
 });
 window.addEventListener('hashchange', () => render());
+// soft keyboard on phones: while a text field has focus AND the visual viewport has shrunk (the keyboard is really up),
+// the tab bar and mic step aside so they never sit on the field (CSS: html.kb-open). Focus alone is not enough:
+// a programmatic focus on Android doesn't raise the keyboard.
+const coarse = matchMedia('(pointer: coarse)');
+const vv = window.visualViewport;
+const isText = el => el?.matches?.('textarea, select, input:not([type=checkbox]):not([type=radio]):not([type=button]):not([type=submit]):not([type=file]):not([type=range])');
+let fullH = vv ? vv.height : innerHeight;
+const kbCheck = () => {
+  const h = vv ? vv.height : innerHeight;
+  if (!isText(document.activeElement) || h > fullH) fullH = h; // no field focused: whatever we see is the full height
+  const open = coarse.matches && isText(document.activeElement) && h < fullH - 140;
+  document.documentElement.classList.toggle('kb-open', open);
+};
+vv?.addEventListener('resize', kbCheck);
+addEventListener('orientationchange', () => { fullH = 0; setTimeout(() => { fullH = vv ? vv.height : innerHeight; kbCheck(); }, 400); });
+document.addEventListener('focusin', () => setTimeout(kbCheck, 350));
+document.addEventListener('focusout', () => setTimeout(kbCheck, 60));
 
 // ---------- install prompt ----------
 window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); window.__installPrompt = e; scheduleRender(); });
@@ -158,7 +194,7 @@ window.__askNotifications = async () => {
   const { openSheet } = await import('./ui/ui.js');
   openSheet({
     title: 'Want a nudge at that time?',
-    body: `<p class="muted">Steady will remind you when a task with a time comes up. You can change this anytime in Settings.</p>
+    body: `<p class="muted">Steady reminds you when a timed task comes up. Change it anytime in You.</p>
       <div class="row end gap"><button class="btn ghost" data-no>Not now</button><button class="btn primary" data-yes>Turn on reminders</button></div>`,
     onMount: (b, api) => {
       b.querySelector('[data-no]').onclick = async () => { await setLocal('notifAsked', true); api.close(); };
@@ -171,11 +207,13 @@ window.__askNotifications = async () => {
 const syncSoon = debounce(() => { if (cloudReady()) syncNow('change'); }, 600);
 window.__markDirty = syncSoon;
 const reconcileSoon = debounce(() => reconcileNtfy(), 1500);
+const rearmSoon = debounce(() => rearmLocal(), 400);
 onChange(d => {
   scheduleRender();
   if (d.rec && d.coll && !d.external) markDirty(d.coll, d.rec);
   if (!d.silent) syncSoon();
   if (d.external) reconcileSoon();
+  if (d.coll === 'tasks' || d.coll === 'meta' || d.external) rearmSoon();
 });
 let lastState = null;
 onStatus(st => {

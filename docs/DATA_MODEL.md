@@ -1,4 +1,4 @@
-# Data model and sync contract (schemaVersion 1)
+# Data model and sync contract (schemaVersion 2)
 
 This is the contract every Steady client (web today, native later, Hark plugin) reads and writes. Source of truth in code: `js/core/schema.js`.
 
@@ -51,10 +51,22 @@ Milestones and actions live inside the goal record, so they merge with the goal 
 ### checkins
 `date` (`YYYY-MM-DD`), `energy` (1–5), `win` (string), `selfCare` (string). One per day (`id = ci-<date>`).
 
+### money (schemaVersion 2, Steady 1.3)
+| Field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `kind` | `expense` \| `income` | `expense` | |
+| `amount` | number | 0 | Rupees (INR), up to 2 decimals, always positive |
+| `category` | string | `Other` | Free text; the app reuses the user's existing spelling |
+| `note` | string | `''` | e.g. "Lunch" |
+| `payee` | string \| null | null | Shop/app/person, e.g. "Swiggy" |
+| `date` | `YYYY-MM-DD` | | Local day it happened |
+| `source` | `manual` \| `typed` \| `voice` | `manual` | How it was entered |
+
 ### meta (synced key/value records)
 | id | Fields |
 | --- | --- |
 | `profile` | `name`, `wake` (`HH:MM`), `sleep` (`HH:MM`, may be after midnight), `onboarded`, `onboardedAt` |
+| `budgets` | `total` (₹ per month, 0 = none), `categories` (`{ [category]: ₹ per month }`) — optional |
 | `settings` | `reminderLead` (min), `checkinNudge` (bool), `defaultReminder` (bool), `ntfyEnabled` (bool), `ntfyTopic` (string), `ntfyServer` (URL) |
 
 ### Device-only (never synced; IndexedDB store `local`)
@@ -109,3 +121,5 @@ Tombstones older than 90 days are pruned when writing. A device offline longer t
 - Clients migrate local IndexedDB on start and remote docs on read.
 - A client that sees a **newer** `schemaVersion` must not write; Steady shows "Update this device to keep syncing".
 - v0 → v1: legacy `schema` key renamed; tasks without `status` get `done`/`open` from `doneAt`.
+- v1 → v2 (1.3): adds the `money` collection (empty). Records pushed by 1.3 carry `schemaVersion: 2`, so a device still on 1.2 stops syncing with "Update this device" instead of crashing on an unknown collection; it updates itself on the next open. IndexedDB moves to version 2 (adds the `money` store). Server: migration `0006_money_agent.sql` allows `coll = 'money'`.
+- Optional fields written by the voice agent: tasks/thoughts may carry `via: 'voice'` (unknown fields are preserved by every client).

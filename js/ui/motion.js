@@ -238,7 +238,8 @@ function slide(ind, x, y, w, h, animate) {
 export function indicators(animate) {
   for (const bar of document.querySelectorAll('.tabbar, .nav-items')) {
     const ind = bar.querySelector('.liquid-ind'); const on = bar.querySelector('.on');
-    if (!ind || !on || !on.offsetWidth) continue;
+    if (!ind) continue;
+    if (!on || !on.offsetWidth) { ind.style.opacity = '0'; lastPos.delete(ind); continue; } // e.g. You, opened from the header
     slide(ind, on.offsetLeft, on.offsetTop, on.offsetWidth, on.offsetHeight, animate);
   }
 }

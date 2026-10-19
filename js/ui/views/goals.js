@@ -17,10 +17,9 @@ export function renderGoals() {
   const goals = all('goals').sort((a, b) => (a.order ?? a.createdAt) - (b.order ?? b.createdAt));
   const tasks = all('tasks');
   const ws = thisWeek();
-  let html = `<div class="page-head"><div><div class="eyebrow">Goals</div><h1 class="display">What you're <em>building</em>.</h1>
-    <p class="sub">Big things, broken into one milestone a week and small daily actions.</p></div></div>`;
+  let html = `<div class="page-head"><div><div class="eyebrow">Goals</div><h1 class="display">What you're <em>building</em>.</h1></div></div>`;
   if (!goals.length) {
-    html += `<section class="empty"><p class="serif big">No goals yet.</p><p class="muted">Name one thing you want to be true in three months.</p><button class="btn primary" data-act="goal-new">${I.plus}<span>Add a goal</span></button></section>`;
+    html += `<section class="empty"><p class="serif big">No goals yet.</p><p class="muted">One thing you want true in three months.</p><button class="btn primary" data-act="goal-new">${I.plus}<span>Add a goal</span></button></section>`;
     return html;
   }
   html += '<div class="goal-list">';

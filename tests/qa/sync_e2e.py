@@ -56,7 +56,7 @@ with sync_playwright() as p:
     chip = a.inner_text('#top-sync') if a.locator('#top-sync').count() else ''
     rec('status shows Live', 'Live' in chip or 'Synced' in chip, chip)
     for r in ['goals', 'thoughts', 'insights', 'you', 'today', 'insights', 'today']:
-        a.click(f'.tabbar [data-route={r}]'); a.wait_for_timeout(450)
+        a.click(f'.tabbar [data-route={r}], .topbar [data-route={r}]'); a.wait_for_timeout(450)
     rec('tab switching ok', a.locator('.v-today').count() == 1)
     # clean up: delete the QA account from the server
     a.evaluate("location.hash='#/you'"); a.wait_for_timeout(600); a.click('[data-act=acct-delete]'); a.wait_for_selector('#da')

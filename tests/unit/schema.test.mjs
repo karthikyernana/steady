@@ -30,3 +30,9 @@ test('migration is idempotent', () => {
   const once = migrateCollections({ tasks: { a: { id: 'a', updatedAt: 1 } } }, 0);
   assert.deepEqual(migrateCollections(once, SCHEMA_VERSION), once);
 });
+test('v1 → v2 (Steady 1.3) adds the money collection without touching anything else', () => {
+  const out = readDoc({ schemaVersion: 1, data: { tasks: { a: { id: 'a', updatedAt: 1, title: 'x', status: 'open' } } } });
+  assert.deepEqual(out.money, {}); assert.equal(out.tasks.a.title, 'x');
+  const m = readDoc({ schemaVersion: 2, data: { money: { e: { id: 'e', updatedAt: 1, amount: 250 } } } });
+  assert.deepEqual([m.money.e.kind, m.money.e.amount, m.money.e.category], ['expense', 250, 'Other']);
+});

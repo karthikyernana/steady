@@ -2,9 +2,9 @@
 
 **A calm, adaptive personal tracker that learns how you work, and keeps you consistent on the days motivation doesn't show up.**
 
-Tasks, goals with weekly milestones, thoughts, and insights that learn your patterns. Installable on Android, Windows, macOS and iOS as an app. Works fully offline, and syncs live across your devices through your own Steady account.
+Tasks, goals with weekly milestones, money, thoughts, and insights that learn your patterns. One mic understands what you say in English, Telugu or both, and drafts the changes for you to accept. Installable on Android, Windows, macOS and iOS as an app. Works fully offline, and syncs live across your devices through your own Steady account.
 
-**Live app:** https://steady-swart-mu.vercel.app · **Source:** https://github.com/karthikyernana/steady
+**Live app:** https://karthikytodo.vercel.app · **Source:** https://github.com/karthikyernana/steady
 
 ---
 
@@ -18,11 +18,13 @@ Motivation lasts a day or two. Generic to-do apps assume it lasts forever, so th
 | --- | --- |
 | **Today** | Quick-add in plain language (see below), priorities, due time, reminders, done / skip / undo, gentle carry-over, an evening check-in. |
 | **Goals** | Long goals broken into weekly milestones and small daily actions; one tap sends an action to Today; progress bars. |
+| **Money** | Income and expenses in ₹: quick-add (“250 lunch swiggy”), categories that learn your spelling, a calm monthly view (spent / in / net / per day, by category, day by day), optional monthly budgets. |
+| **Voice agent** | One mic everywhere (or press V). Speak or type in English, Telugu or code-mix; it understands tasks, reminders, money, thoughts, goals, and “today I did…” progress, using your own tasks, goals and spending as context. Shows editable draft cards; nothing changes until you tap Accept; one Undo for the batch. Learns from your corrections. See [docs/VOICE_AGENT.md](docs/VOICE_AGENT.md). |
 | **Thoughts** | Capture ideas, notes and journal lines with `#tags` and mood; search and tag filters. |
 | **Insights** | Streaks, a contribution-style heatmap, completion by weekday and hour, energy vs output, recent wins. Inline SVG charts. |
 | **Adaptive engine** | Learns best hours/days, suggests reminder times, caps daily load, detects slumps and offers a minimum viable day, and explains every pattern in plain sentences. On-device. See [docs/ADAPTIVE_ENGINE.md](docs/ADAPTIVE_ENGINE.md). |
 | **Accounts + live sync** | Email + password account. Every change is pushed within ~0.6 s and other open devices receive it within ~1–2 s (long-poll). Offline edits queue and merge per record, newest wins. |
-| **Reminders** | Local notifications while open; Web Push when closed (server queue + a 5-minute GitHub Actions trigger); optional ntfy backup channel. |
+| **Reminders** | Local notifications while open (timer armed for the exact minute); Web Push when closed (server queue + a 5-minute GitHub Actions trigger, plus optional per-reminder exact wake-ups via QStash); optional ntfy backup channel. See [docs/NOTIFICATIONS.md](docs/NOTIFICATIONS.md). |
 | **Data** | Export/Import JSON (merging, never clobbering), versioned schema with migrations, delete-account. |
 | **Design** | Two styles: *Liquid glass* (spring-physics motion, translucent surfaces) and *Paper* (flat, opaque, lightest on older phones). Light/dark/system. Honors reduced motion and reduced transparency. |
 | **Hark plugin** | Optional read-only API key so Hark can coach from your data. Steady never depends on Hark. |
@@ -82,12 +84,12 @@ No bundler, no framework, no transpiler: what's in `js/` is what ships. `npm run
 ```
 index.html, manifest.webmanifest, sw.js   app shell, install metadata, offline + push worker
 css/app.css                               design tokens (styles live as token overrides) + components
-js/core/        pure logic (parser, adaptive engine, merge, schema) — unit-tested, no DOM
+js/core/        pure logic (parser, adaptive engine, merge, schema, money, voice-agent core) — unit-tested, no DOM
 js/data/        IndexedDB store, sync + live loop, backup, insights binding
 js/platform/    notifications (local, Web Push, ntfy)
 js/ui/          app shell, views, motion system, charts, icons
 api/index.js    Vercel entry → server/routes.js (the whole API)
-server/         auth, db (RLS helper), migrations runner, push sender
+server/         auth, db (RLS helper), migrations runner, push sender, voice agent (STT + LLM providers), QStash trigger
 db/migrations/  ordered SQL migrations, applied on every deploy
 .github/        CI (tests) + reminders trigger
 docs/           architecture, data model, operations, testing, roadmap

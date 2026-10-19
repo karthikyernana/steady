@@ -5,8 +5,9 @@ import { on, toast, openSheet, segmented, bindSeg, toggle, confirmSheet, request
 import { account, serverConfig, syncNow, getStatus, signOut, signInWithGoogle, checkEmail, signUp, logIn, changePassword, deleteAccount, pendingCount, createReadToken, listReadTokens, revokeReadToken } from '../../data/sync.js';
 import { permission, requestPermission, showLocal, ntfyPublish, reconcileNtfy, reconcileRemote, ntfyServer, NTFY_DEFAULT, enablePush, disablePush, pushSupported } from '../../platform/notify.js';
 import { downloadExport, importJSON } from '../../data/backup.js';
+import { agentMemory, resetAgentMemory } from '../../data/agent.js';
 
-export const APP_VERSION = '1.2.1';
+export const APP_VERSION = '1.3.0';
 let cfg = local('serverConfig') || null;
 serverConfig().then(c => { const changed = JSON.stringify(c) !== JSON.stringify(cfg); cfg = c; if (changed) requestRender(); }).catch(() => {});
 
@@ -20,14 +21,21 @@ function syncSection() {
       <div class="row gap wrap"><button class="btn primary sm" data-act="sync-now" data-testid="sync-now">${I.sync}<span>Sync now</span></button>
         <button class="btn ghost sm" data-act="acct-password">Change password</button>
         <button class="btn ghost sm" data-act="sign-out" data-testid="sign-out">Sign out</button></div>
-      <p class="hint small mt">Your account and data live in Steady's own database (Neon Postgres, Singapore). Changes reach your other signed-in devices within a couple of seconds while Steady is open. <button class="link danger-text" data-act="acct-delete">Delete account</button></p>`;
+      <p class="hint small mt">Other devices update within seconds. <button class="link danger-text" data-act="acct-delete">Delete account</button></p>`;
   }
   if (!cfg || !cfg.db) {
-    return `<p class="muted">Cloud sync isn't reachable right now${navigator.onLine ? '' : ' (you are offline)'}. Everything still works on this device, and it will sync once you sign in.</p>`;
+    return `<p class="muted">Sync isn't reachable${navigator.onLine ? '' : ' (offline)'}. Everything still works here.</p>`;
   }
-  return `<p class="muted">Create a free account with your email to back up your data and keep your phone and laptop in step, live.</p>
+  return `<p class="muted">Back up and keep your phone and laptop in step. Free.</p>
     ${st.error ? `<p class="err small" role="alert">${esc(st.error)}</p>` : ''}
     <button class="btn primary sm" data-act="sign-in" data-testid="sign-in">${I.you}<span>Sign in or create account</span></button>`;
+}
+
+const LLM_NAME = { gemini: 'Gemini', sarvam: 'Sarvam', rules: 'basic rules' };
+function agentState(acct) {
+  if (!acct) return 'Sign in to use voice · typing works now';
+  const a = cfg?.agent; if (!a) return 'Checking…';
+  return a.voice ? `Voice on · understood by ${LLM_NAME[a.llm] || a.llm}` : `Typing only · understood by ${LLM_NAME[a.llm] || a.llm}`;
 }
 
 export function renderSettings() {
@@ -38,8 +46,7 @@ export function renderSettings() {
   const acct = account();
   const pushOn = local('pushOn') && perm === 'granted';
 
-  return `<div class="page-head"><div><div class="eyebrow">You</div><h1 class="display">Settings, <em>kept simple</em>.</h1>
-    <p class="sub">Everything lives on this device first. Sync and reminders are yours to switch on.</p></div></div>
+  return `<div class="page-head"><div><div class="eyebrow">You</div><h1 class="display">Settings, <em>kept simple</em>.</h1></div></div>
 
   <section class="card set" id="sec-profile"><h2 class="card-title">${I.you}<span>About you</span></h2>
     <form class="form" id="pf">
@@ -51,7 +58,7 @@ export function renderSettings() {
   <section class="card set" id="sec-sync" data-testid="sync-section"><h2 class="card-title">${I.sync}<span>Sync across devices</span></h2>${syncSection()}</section>
 
   <section class="card set" id="sec-notif"><h2 class="card-title">${I.bell}<span>Reminders</span></h2>
-    <p class="muted">Steady nudges you at the time you set. ${acct ? 'Because you are signed in, reminders also arrive when the app is closed.' : 'Sign in to get reminders even when the app is closed.'}</p>
+    ${acct ? '' : '<p class="muted">Sign in to get them when the app is closed.</p>'}
     <div class="row between gap wrap"><span class="pill ${perm === 'granted' ? 'ok' : ''}" data-testid="perm-state">${perm === 'granted' ? (pushOn ? 'On, including when closed' : 'On while Steady is open') : perm === 'denied' ? 'Blocked in browser settings' : perm === 'unsupported' ? 'Not supported here' : 'Not enabled yet'}</span>
       <span class="row gap">${perm !== 'granted' && perm !== 'denied' && perm !== 'unsupported' ? '<button class="btn primary sm" data-act="notif-ask">Turn on</button>' : ''}
       ${perm === 'granted' && acct && pushSupported() && !pushOn && cfg?.vapidPublicKey ? '<button class="btn primary sm" data-act="push-on" data-testid="push-on">Also when closed</button>' : ''}
@@ -62,7 +69,7 @@ export function renderSettings() {
     </div>
     ${toggle('def-rem', s.defaultReminder !== false, 'Tasks with a time get a reminder by default')}
     <details class="steps mt" data-testid="ntfy-section" ${s.ntfyEnabled ? 'open' : ''}><summary>Backup channel: ntfy (optional)</summary>
-      <p class="hint small">If you ever want reminders without signing in, Steady can also schedule them on <a href="https://ntfy.sh" target="_blank" rel="noopener">ntfy</a>, a free open-source push app.</p>
+      <p class="hint small">Reminders without an account, via <a href="https://ntfy.sh" target="_blank" rel="noopener">ntfy</a> (free).</p>
       ${toggle('ntfy-on', !!s.ntfyEnabled, 'Also send reminders through ntfy')}
       <div class="ntfy-body ${s.ntfyEnabled ? '' : 'hidden'}">
         <label class="field"><span>Your private topic</span><div class="copy-field"><input id="ntfy-topic" value="${esc(topic)}" readonly><button class="icon-btn" data-act="copy" data-copy="${esc(topic)}" aria-label="Copy topic">${I.copy}</button></div>
@@ -76,17 +83,22 @@ export function renderSettings() {
 
   <section class="card set"><h2 class="card-title">${theme === 'dark' ? I.moon : I.sun}<span>Appearance</span></h2>
     <div class="field"><span>Theme</span>${segmented('theme', [['system', 'System'], ['light', 'Light'], ['dark', 'Dark']], theme)}</div>
-    <div class="field mt"><span>Style</span>${segmented('style', [['liquid', 'Liquid glass'], ['paper', 'Paper']], document.documentElement.dataset.style || 'liquid')}
-      <small class="hint">Paper is flat and opaque, and the lightest on older phones.</small></div></section>
+    <div class="field mt style-pick"><span>Style</span>${segmented('style', [['liquid', 'Liquid glass'], ['paper', 'Paper'], ['grid', 'Grid'], ['papercut', 'Papercut'], ['midnight', 'Midnight']], document.documentElement.dataset.style || 'liquid')}
+      <small class="hint">Paper is lightest on older phones. Midnight is made for the dark.</small></div></section>
+
+  <section class="card set" id="sec-agent" data-testid="agent-section"><h2 class="card-title">${I.mic}<span>Voice agent</span></h2>
+    <p class="muted">Tap the mic or press V. English, తెలుగు, or both. Nothing changes until you accept.</p>
+    <div class="row between gap wrap"><span class="pill ${acct && cfg?.agent?.voice ? 'ok' : ''}" data-testid="agent-state">${agentState(acct)}</span>
+      ${acct ? '<button class="btn ghost sm" data-act="agent-learned" data-testid="agent-learned">What it has learned</button>' : ''}</div></section>
 
   <section class="card set" id="sec-hark" data-testid="hark-section"><h2 class="card-title">${I.spark}<span>Hark plugin <small class="pill">optional</small></span></h2>
-    <p class="muted">Steady works completely on its own. If you want Hark to coach you from your data, give it a read-only key. It can read, never change anything, and you can revoke it any time.</p>
+    <p class="muted">A read-only key lets Hark coach you from your data. Revoke any time.</p>
     ${acct ? `<div class="row gap wrap"><button class="btn ghost sm" data-act="hark-token" data-testid="hark-token">${I.plus}<span>Create read-only key</span></button><button class="btn ghost sm" data-act="hark-list">Manage keys</button></div>`
-      : '<p class="hint small">Sign in to sync first; Hark reads the same private account.</p>'}
+      : '<p class="hint small">Sign in first.</p>'}
   </section>
 
   <section class="card set" id="sec-data"><h2 class="card-title">${I.download}<span>Your data</span></h2>
-    <p class="muted">Export a full backup any time. Importing merges by record, so it never overwrites newer changes.</p>
+    <p class="muted">Import merges by record and keeps newer changes.</p>
     <div class="row gap wrap"><button class="btn ghost sm" data-act="export" data-testid="export">${I.download}<span>Export JSON</span></button>
       <label class="btn ghost sm file-btn">${I.upload}<span>Import JSON</span><input type="file" id="import-file" accept="application/json,.json" data-testid="import"></label>
       ${window.__installPrompt ? `<button class="btn ghost sm" data-act="install">${I.phone}<span>Install app</span></button>` : ''}
@@ -281,3 +293,22 @@ on('acct-delete', () => openSheet({
     catch (x) { b.querySelector('#da-err').textContent = x.message; }
   }),
 }));
+
+on('agent-learned', async () => {
+  let m;
+  try { m = (await agentMemory()).memory; } catch (x) { toast(x.message); return; }
+  const list = (xs, f) => (xs.length ? `<ul class="learned">${xs.map(f).join('')}</ul>` : '<p class="hint">Nothing yet.</p>');
+  openSheet({
+    title: 'What the agent has learned',
+    body: `<p class="muted">From what you accepted and corrected. Stays in your account.</p>
+      <p class="small"><strong>${m.accepted}</strong> accepted · <strong>${m.edited}</strong> edited before accepting</p>
+      <div class="field"><span>Your categories</span>${list(m.categories, c => `<li>${esc(c.name)} <small class="muted">× ${c.n}</small></li>`)}</div>
+      <div class="field"><span>Payees</span>${list(m.payees, p => `<li>${esc(p.name)} → ${esc(p.category)}</li>`)}</div>
+      <div class="field"><span>Your corrections</span>${list(m.corrections, c => `<li>“${esc(c.word)}” → ${esc(c.category)}</li>`)}</div>
+      <div class="row end gap form-actions"><button class="btn ghost sm danger-text" data-forget>Forget all of it</button></div>`,
+    onMount: (b, api) => b.querySelector('[data-forget]').onclick = async () => {
+      if (!(await confirmSheet('Forget everything the agent learned? Your tasks, money and thoughts are not touched.', 'Forget', true))) return;
+      await resetAgentMemory().catch(x => toast(x.message)); api.close(); toast('Forgotten. It will learn again as you go.');
+    },
+  });
+});

@@ -8,6 +8,9 @@
 - Encrypted sync option (passphrase, AES-GCM via WebCrypto) so the repo holds ciphertext.
 - Calendar export (.ics) for timed tasks.
 
+## Shipped in 1.3
+- Money tab, and the voice capture agent (see VOICE_AGENT.md) — the first piece of the v2 AI layer, server-side with explicit Accept.
+
 ## v2: AI layer, optional plugin (see V2_AGENTS_PLAN.md)
 - Planner, coach, reflection and insight agents behind one orchestrator, reading the same data contract.
 - On-device first (Chrome Prompt API / Gemini Nano on Android), cloud LLM by explicit opt-in.

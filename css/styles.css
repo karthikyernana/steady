@@ -1,0 +1,331 @@
+/* Steady — extra styles: "grid", "papercut", "midnight".
+   Loaded after app.css. Each style is a token set on html[data-style=…] (light + [data-theme=dark]) plus a small,
+   scoped set of component flourishes. Nothing here changes layout or touch-target sizes, and nothing outside
+   html[data-style=…] is touched, so the default liquid style and paper are unaffected. */
+
+@font-face { font-family: 'Schibsted Grotesk'; src: url('../fonts/schibsted-grotesk-latin-wght-normal.woff2') format('woff2'); font-weight: 400 900; font-display: swap; }
+@font-face { font-family: 'IBM Plex Mono'; src: url('../fonts/ibm-plex-mono-latin-500-normal.woff2') format('woff2'); font-weight: 500; font-display: swap; }
+@font-face { font-family: 'Young Serif'; src: url('../fonts/young-serif-latin-400-normal.woff2') format('woff2'); font-weight: 400; font-display: swap; }
+@font-face { font-family: 'Figtree'; src: url('../fonts/figtree-latin-wght-normal.woff2') format('woff2'); font-weight: 300 900; font-display: swap; }
+@font-face { font-family: 'Newsreader'; src: url('../fonts/newsreader-latin-400-normal.woff2') format('woff2'); font-weight: 400; font-display: swap; }
+@font-face { font-family: 'Newsreader'; src: url('../fonts/newsreader-latin-400-italic.woff2') format('woff2'); font-weight: 400; font-style: italic; font-display: swap; }
+@font-face { font-family: 'Hanken Grotesk'; src: url('../fonts/hanken-grotesk-latin-wght-normal.woff2') format('woff2'); font-weight: 100 900; font-display: swap; }
+
+/* Shared: numerals line up in counters and stats */
+html:is([data-style="grid"], [data-style="papercut"], [data-style="midnight"]) :is(.head-ring span, .stat-n, .count, .bucket-row strong, .m-amt) { font-variant-numeric: tabular-nums; }
+
+/* Shared: opaque surfaces for the three new styles (no backdrop blur unless a style opts back in). */
+html:is([data-style="grid"], [data-style="papercut"], [data-style="midnight"]) {
+  --glass: var(--surface); --glass-strong: var(--surface); --glass-card: var(--surface);
+  --glass-blur: none; --glass-rim: transparent; --sheen: transparent;
+}
+html:is([data-style="grid"], [data-style="papercut"]) .tabbar::after { display: none; }
+html:is([data-style="grid"], [data-style="papercut"], [data-style="midnight"]) #toast { background: var(--ink); }
+html:is([data-style="grid"], [data-style="papercut"], [data-style="midnight"])[data-theme="dark"] .btn.danger { color: var(--ground); }
+
+/* =====================================================================================================
+   1 · GRID — Swiss editorial. Newsprint white, near-black ink, one ultramarine signal. Heavy grotesk
+   numerals, mono labels, hairline rules, square checkboxes, an underline tab indicator.
+   ===================================================================================================== */
+html[data-style="grid"] {
+  --ground: #F3F0E8; --surface: #FBFAF6; --surface-2: #E8E4D9; --line: #D5CFC2; --line-2: #8F897C;
+  --ink: #13120F; --ink-2: #36342E; --muted: #57534A; --faint: #625E55;
+  --accent: #2A3DBF; --accent-ink: #FFFFFF; --accent-soft: #E2E5F6; --accent-line: #B4BCEB;
+  --warn: #9A4A0F; --danger: #A3361F; --hi: #A9460C;
+  --hm0: #E4DFD3; --hm1: #C9CFF0; --hm2: #8D9BE3; --hm3: #4F62D0; --hm4: #2A3DBF;
+  --shadow: none; --shadow-lg: 0 24px 60px -24px rgba(19,18,15,.35);
+  --glass-edge: var(--line); --glass-hi: transparent; --glass-lo: transparent; --glass-shadow: none;
+  --radius: 6px; --radius-sm: 4px;
+  --serif: 'Schibsted Grotesk', 'Helvetica Neue', Arial, sans-serif;
+  --sans: 'Schibsted Grotesk', 'Helvetica Neue', Arial, system-ui, sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+}
+html[data-style="grid"][data-theme="dark"] {
+  --ground: #12110E; --surface: #1A1915; --surface-2: #25231E; --line: #35322B; --line-2: #6E695E;
+  --ink: #F3EFE5; --ink-2: #D3CEC2; --muted: #ABA598; --faint: #9E988B;
+  --accent: #A3AEFF; --accent-ink: #0D1030; --accent-soft: #1D2140; --accent-line: #3C4585;
+  --warn: #E9A877; --danger: #F0A08A; --hi: #F2A46A;
+  --hm0: #2A2823; --hm1: #262C55; --hm2: #3C478F; --hm3: #6875D6; --hm4: #A3AEFF;
+  --shadow-lg: 0 24px 60px -20px rgba(0,0,0,.8);
+}
+html[data-style="grid"] body { font-feature-settings: normal; letter-spacing: -.005em; }
+html[data-style="grid"] .ambient { display: none; }
+html[data-style="grid"] .topbar::before { background: var(--ground); box-shadow: inset 0 -1.5px 0 var(--ink); }
+html[data-style="grid"] .brand { font-weight: 800; letter-spacing: -.04em; font-size: 1.35rem; }
+/* type: heavy display, mono labels */
+html[data-style="grid"] :is(.serif, .display, .sec-head h2, .goal-title, .boot-word, .sheet-title, .stat-n, .bucket-row strong, .remember-list p, .wins p, .empty .big, .month-title, .m-amt) {
+  font-weight: 760; letter-spacing: -.035em; }
+html[data-style="grid"] .display { font-size: clamp(2.3rem, 10vw, 3.4rem); line-height: .96; letter-spacing: -.045em; }
+html[data-style="grid"] .display em { font-style: normal; color: var(--accent); }
+html[data-style="grid"] :is(.eyebrow, .day-label, .count, .t-meta, .stat-l, .legend, .pill, .chip, .np-app, .field > span, .bucket-row span) {
+  font-family: var(--mono); font-weight: 500; letter-spacing: .02em; }
+html[data-style="grid"] :is(.eyebrow, .day-label) { letter-spacing: .08em; color: var(--ink-2); }
+html[data-style="grid"] .field > span { text-transform: uppercase; font-size: .72rem; letter-spacing: .06em; }
+html[data-style="grid"] .page-head { border-bottom: 2px solid var(--ink); padding-bottom: 16px; }
+html[data-style="grid"] .sec-head { border-bottom: 1px solid var(--ink); padding-bottom: 6px; }
+html[data-style="grid"] .sec-head h2 { font-size: 1.3rem; }
+html[data-style="grid"] .head-ring span { font-family: var(--serif); font-weight: 800; font-size: 1.5rem; letter-spacing: -.04em; }
+html[data-style="grid"] :is(.ring-bg, .ring-fg) { stroke-width: 5; stroke-linecap: butt; }
+html[data-style="grid"] .stat-n { font-size: 2.6rem; }
+/* surfaces: flat, ruled */
+html[data-style="grid"] .card { box-shadow: none; border-color: var(--line); border-top: 2px solid var(--ink); }
+html[data-style="grid"] .card.soft { background: var(--surface-2); border-color: var(--surface-2); border-top-color: var(--line-2); }
+html[data-style="grid"] .card.accent-soft { background: var(--accent-soft); border-color: var(--accent-line); border-top-color: var(--accent); }
+html[data-style="grid"] .checkin-cta { background: var(--surface); }
+html[data-style="grid"] .remember { border-top-color: var(--accent); }
+html[data-style="grid"] .task { border-radius: 4px; box-shadow: none; }
+html[data-style="grid"] .task::before { left: 0; top: 0; bottom: 0; width: 4px; border-radius: 0; }
+html[data-style="grid"] .composer { border-radius: 6px; border: 1.5px solid var(--ink); }
+html[data-style="grid"] .composer:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
+html[data-style="grid"] .prompt-icon { border-radius: 4px; background: var(--ink); color: var(--ground); box-shadow: none; }
+html[data-style="grid"] :is(.milestone-now, .bucket-row div) { border-radius: 4px; box-shadow: none; background: var(--surface-2); }
+html[data-style="grid"] :is(.progress) { border-radius: 0; border: 0; height: 6px; }
+html[data-style="grid"] .progress span { border-radius: 0; background: var(--accent); box-shadow: none; }
+html[data-style="grid"] .check::before { border-radius: 4px; border-width: 2px; border-color: var(--ink-2); }
+html[data-style="grid"] :is(.task.done .check::before, .check.on::before) { box-shadow: none; background: var(--ink); border-color: var(--ink); }
+html[data-style="grid"] :is(.task.done .check, .check.on) { color: var(--ground); }
+/* controls */
+html[data-style="grid"] .btn { border-radius: 4px; font-weight: 640; letter-spacing: -.005em; border-width: 1.5px; border-color: var(--ink); }
+html[data-style="grid"] .btn.primary { box-shadow: none; }
+html[data-style="grid"] .btn.primary:hover { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+html[data-style="grid"] .btn.ghost { border-color: var(--line-2); }
+html[data-style="grid"] :is(.chip-btn, .sync-chip, .search) { border-radius: 4px; box-shadow: none; }
+html[data-style="grid"] :is(.chip, .pill) { border-radius: 3px; }
+html[data-style="grid"] :is(input:not([type=checkbox]):not([type=file]), select, textarea) { border-radius: 4px; }
+html[data-style="grid"] .seg { border-radius: 6px; padding: 2px; background: var(--surface-2); }
+html[data-style="grid"] :is(.seg button, .seg-ind) { border-radius: 4px; }
+html[data-style="grid"] .seg-ind::before { box-shadow: 0 0 0 1.5px var(--ink); background: var(--surface); }
+html[data-style="grid"][data-theme="dark"] :is(.seg button.on, .seg-ind::before) { background: var(--surface); }
+html[data-style="grid"][data-theme="dark"] .seg:has(.seg-ind) button.on { background: transparent; }
+html[data-style="grid"] .switch .track { border-radius: 4px; }
+html[data-style="grid"] .switch .thumb { border-radius: 3px; box-shadow: none; }
+html[data-style="grid"] .icon-btn { border-radius: 4px; }
+/* tab bar: opaque slab, ultramarine underline marks the current tab */
+html[data-style="grid"] .tabbar { border-radius: 8px; border: 1.5px solid var(--ink); background: var(--surface); box-shadow: 0 10px 24px -16px rgba(19,18,15,.4); }
+html[data-style="grid"] .liquid-ind i { border-radius: 0; background: transparent; box-shadow: inset 0 -3px 0 var(--accent); }
+html[data-style="grid"] .nav-items .liquid-ind i { border-radius: 4px; background: var(--surface); box-shadow: inset 3px 0 0 var(--accent), 0 0 0 1px var(--line); }
+html[data-style="grid"] .tab { border-radius: 4px; font-weight: 640; }
+html[data-style="grid"] .tab.on svg { color: var(--ink); }
+html[data-style="grid"] .side { background: var(--ground); border-right: 1.5px solid var(--ink); }
+html[data-style="grid"] .sheet { background: var(--surface); border-radius: 10px 10px 0 0; border: 1.5px solid var(--ink); border-bottom: 0; }
+@media (min-width: 720px) { html[data-style="grid"] .sheet { border-radius: 10px; border-bottom: 1.5px solid var(--ink); } }
+html[data-style="grid"] #toast { border-radius: 6px; }
+html[data-style="grid"] .toast-undo { border-radius: 4px; }
+@media (hover: hover) and (pointer: fine) {
+  html[data-style="grid"] :is(.task, .thought, .goal, .stat):hover { transform: none; box-shadow: inset 0 0 0 1px var(--ink); }
+}
+
+/* =====================================================================================================
+   2 · PAPERCUT — tactile, layered cut paper. Apricot ground, cream sheets that sit on coloured
+   under-layers, a deep teal accent, pressed-in wells for checks and tracks, buttons that physically press.
+   ===================================================================================================== */
+html[data-style="papercut"] {
+  --ground: #F5DDCB; --surface: #FFF6EC; --surface-2: #F8E7D8; --line: #EBCDB7; --line-2: #D2A98D;
+  --ink: #2B1C19; --ink-2: #4C3631; --muted: #6A4E45; --faint: #73574D;
+  --accent: #1C5C58; --accent-ink: #FFF6EC; --accent-soft: #D9ECE6; --accent-line: #9FCAC1;
+  --warn: #8F4A12; --danger: #A23A27; --hi: #94530A;
+  --hm0: #EED6C3; --hm1: #BFE0D7; --hm2: #7FBCB0; --hm3: #3D8A82; --hm4: #1C5C58;
+  --cut: #E39C78; --cut-2: #2F6E69; --cut-shade: rgba(84,40,22,.22);
+  --shadow: 0 4px 0 var(--cut), 0 10px 22px -12px var(--cut-shade);
+  --shadow-lg: 0 6px 0 var(--cut), 0 30px 60px -24px rgba(84,40,22,.45);
+  --glass-edge: color-mix(in srgb, var(--cut) 55%, var(--surface)); --glass-hi: rgba(255,255,255,.9); --glass-lo: transparent;
+  --glass-shadow: 0 4px 0 var(--cut), 0 14px 30px -14px var(--cut-shade);
+  --well: inset 0 2px 3px rgba(84,40,22,.2), inset 0 -1px 0 rgba(255,255,255,.7);
+  --radius: 22px; --radius-sm: 14px;
+  --serif: 'Young Serif', 'Iowan Old Style', Georgia, serif;
+  --sans: 'Figtree', system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+html[data-style="papercut"][data-theme="dark"] {
+  --ground: #231719; --surface: #312225; --surface-2: #3B2A2D; --line: #4A3538; --line-2: #8A6A6E;
+  --ink: #FAEBE1; --ink-2: #E4CEC3; --muted: #CBB0A4; --faint: #BDA196;
+  --accent: #82CFC5; --accent-ink: #10302D; --accent-soft: #233A39; --accent-line: #3C6762;
+  --warn: #F1B27E; --danger: #F4A592; --hi: #F2B860;
+  --hm0: #3A2A2D; --hm1: #24413F; --hm2: #2F6B65; --hm3: #4FA095; --hm4: #82CFC5;
+  --cut: #120B0C; --cut-2: #82CFC5; --cut-shade: rgba(0,0,0,.6);
+  --glass-edge: #4A3538; --glass-hi: rgba(255,255,255,.07);
+  --well: inset 0 2px 4px rgba(0,0,0,.45), inset 0 -1px 0 rgba(255,255,255,.05);
+}
+html[data-style="papercut"] body { background: var(--ground); font-feature-settings: normal; }
+html[data-style="papercut"] .topbar::before { background: var(--ground); box-shadow: 0 3px 0 color-mix(in srgb, var(--cut) 50%, var(--ground)); }
+/* the world: three hard-edged paper cut-outs instead of blurry glows */
+html[data-style="papercut"] .ambient i { filter: none; }
+html[data-style="papercut"] .ambient i:nth-child(1) { width: 70vmax; height: 70vmax; left: -38vmax; top: -40vmax;
+  background: color-mix(in srgb, var(--cut) 26%, var(--ground)); box-shadow: 0 6px 0 color-mix(in srgb, var(--cut) 40%, var(--ground)); }
+html[data-style="papercut"] .ambient i:nth-child(2) { width: 46vmax; height: 46vmax; right: -24vmax; top: 34vh;
+  background: color-mix(in srgb, var(--accent-soft) 70%, var(--ground)); box-shadow: 0 6px 0 color-mix(in srgb, var(--accent-line) 45%, var(--ground)); }
+html[data-style="papercut"] .ambient i:nth-child(3) { width: 80vmax; height: 80vmax; left: -20vmax; bottom: -66vmax;
+  background: color-mix(in srgb, var(--cut) 18%, var(--ground)); box-shadow: 0 -6px 0 color-mix(in srgb, var(--cut) 30%, var(--ground)); }
+html[data-style="papercut"][data-theme="dark"] .ambient i:nth-child(1) { background: #2C1D20; box-shadow: 0 6px 0 #1A1113; }
+html[data-style="papercut"][data-theme="dark"] .ambient i:nth-child(2) { background: #20302F; box-shadow: 0 6px 0 #151F1E; }
+html[data-style="papercut"][data-theme="dark"] .ambient i:nth-child(3) { background: #2A1B1E; box-shadow: 0 -6px 0 #1A1113; }
+/* type */
+html[data-style="papercut"] .display { letter-spacing: -.025em; line-height: 1.06; }
+html[data-style="papercut"] .display em { font-style: normal; color: var(--accent); }
+html[data-style="papercut"] .brand { font-size: 1.35rem; }
+html[data-style="papercut"] .eyebrow { color: var(--ink-2); font-weight: 700; }
+html[data-style="papercut"] :is(.head-ring span, .stat-n) { font-family: var(--sans); font-weight: 750; letter-spacing: -.02em; }
+html[data-style="papercut"] .head-ring span { font-size: 1.3rem; }
+/* sheets of paper on coloured under-layers */
+html[data-style="papercut"] .card { border: 1.5px solid var(--glass-edge); box-shadow: var(--shadow); }
+html[data-style="papercut"] .card.soft { background: var(--surface-2); box-shadow: 0 3px 0 color-mix(in srgb, var(--cut) 55%, var(--ground)); border-color: var(--line); }
+html[data-style="papercut"] .card.accent-soft { background: var(--accent-soft); box-shadow: 0 4px 0 var(--cut-2); border-color: var(--accent-line); }
+html[data-style="papercut"] .checkin-cta { background: var(--surface); box-shadow: 0 4px 0 var(--cut-2), 0 10px 22px -12px var(--cut-shade); border-color: var(--accent-line); }
+html[data-style="papercut"] .remember { box-shadow: 0 5px 0 var(--cut-2), var(--shadow-lg); }
+html[data-style="papercut"] .task { border: 1.5px solid var(--glass-edge); border-radius: 18px; box-shadow: 0 3px 0 color-mix(in srgb, var(--cut) 70%, var(--surface)); }
+html[data-style="papercut"] .tasks.dim .task { box-shadow: none; }
+html[data-style="papercut"] .task::before { left: 5px; top: 50%; bottom: auto; height: 22px; margin-top: -11px; width: 4px; border-radius: 4px; }
+html[data-style="papercut"] .composer { border: 1.5px solid var(--glass-edge); box-shadow: 0 4px 0 var(--cut-2), 0 10px 22px -12px var(--cut-shade); background: var(--surface); }
+html[data-style="papercut"] .composer:focus-within { border-color: var(--accent); box-shadow: 0 4px 0 var(--cut-2), 0 0 0 4px color-mix(in srgb, var(--accent) 16%, transparent); }
+html[data-style="papercut"] .prompt-icon { background: var(--accent-soft); box-shadow: 0 2px 0 var(--accent-line); border-radius: 14px; }
+html[data-style="papercut"] :is(.milestone-now, .bucket-row div) { background: var(--surface-2); box-shadow: var(--well); }
+/* pressed-in wells */
+html[data-style="papercut"] .progress { height: 10px; border: 0; background: var(--surface-2); box-shadow: var(--well); }
+html[data-style="papercut"] .progress span { background: var(--accent); box-shadow: inset 0 1px 0 rgba(255,255,255,.35); }
+html[data-style="papercut"] .check::before { width: 26px; height: 26px; border: 1.6px solid var(--line-2); background: var(--surface-2); box-shadow: var(--well); }
+html[data-style="papercut"] :is(.task.done .check::before, .check.on::before) { background: var(--accent); box-shadow: 0 2px 0 var(--cut-2), inset 0 1px 0 rgba(255,255,255,.3); }
+html[data-style="papercut"][data-theme="dark"] :is(.task.done .check::before, .check.on::before) { box-shadow: 0 2px 0 #10302D, inset 0 1px 0 rgba(255,255,255,.3); }
+html[data-style="papercut"] :is(input:not([type=checkbox]):not([type=file]), select, textarea) { background-color: var(--surface-2); border-color: transparent; box-shadow: var(--well); }
+html[data-style="papercut"] :is(input, select, textarea):focus { border-color: var(--accent); box-shadow: var(--well), 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+html[data-style="papercut"] .composer input#qa, html[data-style="papercut"] .composer input#mq, html[data-style="papercut"] .capture textarea, html[data-style="papercut"] .search input { box-shadow: none !important; background: transparent; }
+html[data-style="papercut"] .seg { background: var(--surface-2); border: 0; box-shadow: var(--well); }
+html[data-style="papercut"] .seg-ind::before { background: var(--surface); box-shadow: 0 2px 0 var(--cut), 0 0 0 1px var(--glass-edge); }
+html[data-style="papercut"][data-theme="dark"] :is(.seg button.on, .seg-ind::before) { background: var(--line-2); }
+html[data-style="papercut"][data-theme="dark"] .seg:has(.seg-ind) button.on { background: transparent; }
+html[data-style="papercut"] .switch .track { box-shadow: var(--well); }
+/* buttons that press down */
+html[data-style="papercut"] .btn { border: 1.5px solid var(--glass-edge); box-shadow: 0 3px 0 var(--cut); font-weight: 650; }
+html[data-style="papercut"] .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); box-shadow: 0 3px 0 color-mix(in srgb, var(--accent) 55%, #000); }
+html[data-style="papercut"] .btn.primary:hover { background: color-mix(in srgb, var(--accent) 90%, #000); }
+html[data-style="papercut"] .btn.ghost { background: var(--surface); }
+html[data-style="papercut"] .btn.danger { box-shadow: 0 3px 0 color-mix(in srgb, var(--danger) 55%, #000); }
+html[data-style="papercut"] :is(.btn, .chip-btn):active { transform: translateY(2px); box-shadow: 0 1px 0 var(--cut); }
+html[data-style="papercut"] .chip-btn { background: var(--surface); border: 1.5px solid var(--glass-edge); box-shadow: 0 2px 0 var(--cut); }
+html[data-style="papercut"] .chip-btn.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+html[data-style="papercut"] .chip-btn.on svg { color: currentColor; }
+html[data-style="papercut"] .sync-chip { background: var(--surface); box-shadow: 0 2px 0 var(--cut); }
+html[data-style="papercut"] .search { background: var(--surface); box-shadow: var(--well); border-color: transparent; }
+html[data-style="papercut"] .icon-btn:hover { background: var(--surface-2); }
+/* tab bar: a cream strip on a terracotta layer */
+html[data-style="papercut"] .tabbar { background: var(--surface); border: 1.5px solid var(--glass-edge); box-shadow: 0 5px 0 var(--cut), 0 18px 34px -16px var(--cut-shade); border-radius: 26px; }
+html[data-style="papercut"] .liquid-ind i { border-radius: 20px; background: var(--accent-soft); box-shadow: var(--well); }
+html[data-style="papercut"] .tab.on { color: var(--accent); }
+html[data-style="papercut"] .tab { font-weight: 650; }
+html[data-style="papercut"] .side { background: color-mix(in srgb, var(--surface) 55%, var(--ground)); border-right: 0; box-shadow: 4px 0 0 color-mix(in srgb, var(--cut) 45%, var(--ground)); }
+html[data-style="papercut"] .nav-items .liquid-ind i { background: var(--surface); box-shadow: 0 3px 0 var(--cut), 0 0 0 1.5px var(--glass-edge); }
+html[data-style="papercut"] .sheet { background: var(--surface); box-shadow: 0 -5px 0 var(--cut), var(--shadow-lg); }
+html[data-style="papercut"] #toast { box-shadow: 0 4px 0 var(--cut-2), var(--shadow-lg); }
+@media (hover: hover) and (pointer: fine) {
+  html[data-style="papercut"] :is(.task, .thought, .goal, .stat):hover { transform: translateY(-2px); box-shadow: 0 5px 0 var(--cut), 0 16px 28px -16px var(--cut-shade); }
+}
+
+/* =====================================================================================================
+   3 · MIDNIGHT — dark-first. Deep navy slate, warm ivory type, brass for the one thing that matters,
+   sage for the secondary signal, no red anywhere. Light counterpart ("dawn"): cool mist with burnished brass.
+   ===================================================================================================== */
+html[data-style="midnight"] {
+  /* light counterpart: dawn */
+  --ground: #ECEFF3; --surface: #FAFBFC; --surface-2: #E1E6ED; --line: #D2D9E2; --line-2: #A9B4C3;
+  --ink: #111A2B; --ink-2: #2B3851; --muted: #4C586D; --faint: #59657A;
+  --accent: #7A5A1C; --accent-ink: #FFFFFF; --accent-soft: #F1E7D3; --accent-line: #D9C59B;
+  --warn: #8A5410; --danger: #95500C; --hi: #3C6B4B;
+  --hm0: #DDE3EA; --hm1: #EAD9B4; --hm2: #CFAE6E; --hm3: #A07C35; --hm4: #7A5A1C;
+  --brass: #B08A42;
+  --shadow: 0 1px 0 rgba(17,26,43,.04), 0 10px 26px -16px rgba(17,26,43,.28);
+  --shadow-lg: 0 28px 60px -24px rgba(17,26,43,.45);
+  --glass: color-mix(in srgb, var(--surface) 82%, transparent); --glass-blur: blur(18px) saturate(1.4);
+  --glass-edge: var(--line); --glass-hi: rgba(255,255,255,.9); --glass-lo: transparent;
+  --glass-shadow: 0 1px 0 rgba(17,26,43,.04), 0 16px 36px -18px rgba(17,26,43,.32);
+  --radius: 14px; --radius-sm: 10px;
+  --serif: 'Newsreader', 'Iowan Old Style', Georgia, serif;
+  --sans: 'Hanken Grotesk', system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+html[data-style="midnight"][data-theme="dark"] {
+  --ground: #0C1220; --surface: #131B2A; --surface-2: #1A2334; --line: #243046; --line-2: #36445E;
+  --ink: #EDE7D9; --ink-2: #CCC6B8; --muted: #9DA6B6; --faint: #8F99AA;
+  --accent: #D4B06E; --accent-ink: #1A1408; --accent-soft: #252826; --accent-line: #5A4D33;
+  --warn: #DDB47E; --danger: #E5A762; --hi: #9EC3A1;
+  --hm0: #1C2536; --hm1: #3A3A2E; --hm2: #6B5E3C; --hm3: #A68A52; --hm4: #D4B06E;
+  --brass: #D4B06E;
+  --shadow: 0 1px 0 rgba(0,0,0,.3), 0 14px 34px -18px rgba(0,0,0,.8);
+  --shadow-lg: 0 30px 70px -24px rgba(0,0,0,.9);
+  --glass: color-mix(in srgb, var(--surface) 84%, transparent);
+  --glass-edge: var(--line); --glass-hi: rgba(237,231,217,.06);
+  --glass-shadow: 0 1px 0 rgba(0,0,0,.3), 0 20px 44px -20px rgba(0,0,0,.85);
+}
+html[data-style="midnight"] body { font-feature-settings: normal; }
+/* the world: a low navy horizon glow and a single brass moon, no colour wash */
+html[data-style="midnight"] .ambient i:nth-child(1) { width: 90vmax; height: 90vmax; left: -30vmax; top: -50vmax;
+  background: radial-gradient(closest-side, color-mix(in srgb, var(--ink-2) 10%, transparent), transparent); }
+html[data-style="midnight"] .ambient i:nth-child(2) { width: 34vmax; height: 34vmax; right: -12vmax; top: -10vmax;
+  background: radial-gradient(closest-side, color-mix(in srgb, var(--brass) 16%, transparent), transparent 70%); }
+html[data-style="midnight"] .ambient i:nth-child(3) { width: 90vmax; height: 60vmax; left: -20vmax; bottom: -40vmax;
+  background: radial-gradient(closest-side, color-mix(in srgb, var(--hi) 9%, transparent), transparent); }
+html[data-style="midnight"][data-theme="dark"] .ambient i:nth-child(1) { background: radial-gradient(closest-side, rgba(52,74,120,.35), transparent); }
+html[data-style="midnight"][data-theme="dark"] .ambient i:nth-child(2) { background: radial-gradient(closest-side, color-mix(in srgb, var(--brass) 12%, transparent), transparent 70%); }
+html[data-style="midnight"][data-theme="dark"] .ambient i:nth-child(3) { background: radial-gradient(closest-side, color-mix(in srgb, var(--hi) 6%, transparent), transparent); }
+/* type: optical serif display with brass italics, quiet grotesk body */
+html[data-style="midnight"] .display { letter-spacing: -.025em; line-height: 1.02; }
+html[data-style="midnight"] .display em { color: var(--accent); }
+html[data-style="midnight"] .eyebrow { color: var(--accent); letter-spacing: .18em; font-weight: 650; }
+html[data-style="midnight"] .day-label { letter-spacing: .16em; }
+html[data-style="midnight"] .brand { font-size: 1.5rem; }
+html[data-style="midnight"] .head-ring span { font-size: 1.45rem; font-variant-numeric: lining-nums; }
+html[data-style="midnight"] :is(.ring-bg) { stroke: var(--line); stroke-width: 2; }
+html[data-style="midnight"] :is(.ring-fg) { stroke-width: 2.5; }
+/* surfaces: opaque panels with a brass hairline on top */
+html[data-style="midnight"] .card { box-shadow: inset 0 1px 0 color-mix(in srgb, var(--brass) 26%, transparent), var(--shadow); }
+html[data-style="midnight"] .card.soft { background: var(--surface-2); box-shadow: none; border-color: transparent; }
+html[data-style="midnight"] .card.accent-soft { background: var(--accent-soft); box-shadow: inset 0 1px 0 color-mix(in srgb, var(--brass) 40%, transparent); }
+html[data-style="midnight"] .checkin-cta { background: linear-gradient(135deg, var(--surface) 40%, var(--accent-soft)); }
+html[data-style="midnight"] .remember { background: var(--ink); }
+html[data-style="midnight"][data-theme="dark"] .remember { background: var(--surface-2); border-color: var(--accent-line); }
+html[data-style="midnight"] .task { box-shadow: var(--shadow); border-radius: 12px; }
+html[data-style="midnight"] .task::before { background: transparent; }
+html[data-style="midnight"] .task.p3::before { background: var(--accent); }
+html[data-style="midnight"] .composer { border: 1px solid var(--line); background: var(--surface); }
+html[data-style="midnight"] .prompt-icon { background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent-line); border-radius: 10px; }
+html[data-style="midnight"] :is(.milestone-now, .bucket-row div) { box-shadow: none; background: var(--surface-2); }
+html[data-style="midnight"] .progress { height: 4px; border: 0; background: var(--line); }
+html[data-style="midnight"] .progress span { background: var(--accent); box-shadow: none; }
+html[data-style="midnight"] .check::before { border-width: 1.5px; border-color: var(--line-2); }
+html[data-style="midnight"] :is(.task.done .check::before, .check.on::before) { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
+/* controls */
+html[data-style="midnight"] .btn { border-radius: 10px; font-weight: 600; }
+html[data-style="midnight"] .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); box-shadow: 0 8px 20px -12px color-mix(in srgb, var(--accent) 80%, transparent); }
+html[data-style="midnight"] .btn.primary:hover { background: color-mix(in srgb, var(--accent) 88%, var(--ink)); }
+html[data-style="midnight"] :is(.chip-btn, .sync-chip) { border-radius: 10px; background: var(--surface); box-shadow: none; }
+html[data-style="midnight"] .chip-btn.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+html[data-style="midnight"] .chip-btn.on svg { color: currentColor; }
+html[data-style="midnight"] .seg { border-radius: 12px; }
+html[data-style="midnight"] :is(.seg button, .seg-ind) { border-radius: 9px; }
+html[data-style="midnight"] .seg-ind::before { box-shadow: inset 0 0 0 1px var(--accent-line), 0 4px 10px -6px rgba(0,0,0,.4); }
+html[data-style="midnight"] .switch input:checked + .track .thumb { background: var(--accent-ink); }
+/* tab bar: frosted navy slab, brass dot over the current tab */
+html[data-style="midnight"] .tabbar { border-radius: 20px; }
+html[data-style="midnight"] .tabbar::after { background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--brass) 45%, transparent), transparent); padding: 1px 0 0; opacity: .8; }
+html[data-style="midnight"] .liquid-ind i { border-radius: 14px; background: color-mix(in srgb, var(--accent) 12%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 28%, transparent); }
+html[data-style="midnight"] .tab.on svg { color: var(--accent); }
+html[data-style="midnight"] .nav-items .liquid-ind i { background: var(--surface); box-shadow: inset 2px 0 0 var(--accent), 0 0 0 1px var(--line); }
+html[data-style="midnight"] .side { background: color-mix(in srgb, var(--surface) 55%, transparent); }
+html[data-style="midnight"] .sheet { background: var(--surface); box-shadow: inset 0 1px 0 color-mix(in srgb, var(--brass) 30%, transparent), var(--shadow-lg); }
+html[data-style="midnight"] #toast { background: var(--surface-2); color: var(--ink); box-shadow: inset 0 0 0 1px var(--accent-line), var(--shadow-lg); }
+html[data-style="midnight"]:not([data-theme="dark"]) #toast { background: var(--ink); color: var(--ground); }
+html[data-style="midnight"][data-theme="dark"] .toast-undo { background: var(--accent); color: var(--accent-ink); }
+
+/* reduced transparency: midnight falls back to opaque bars */
+@media (prefers-reduced-transparency: reduce) {
+  html[data-style="midnight"] { --glass: var(--surface); --glass-blur: none; }
+}
+
+/* the style picker: five options on two rows on phones (3 + 2), one row from 560px */
+.style-pick .seg { display: grid; grid-template-columns: repeat(6, 1fr); }
+.style-pick .seg button { grid-column: span 2; white-space: nowrap; padding: 0 4px; }
+.style-pick .seg button:nth-of-type(n+4) { grid-column: span 3; }
+@media (min-width: 560px) { .style-pick .seg { grid-template-columns: repeat(5, 1fr); } .style-pick .seg button, .style-pick .seg button:nth-of-type(n+4) { grid-column: auto; } }
+
+/* v1.3 surfaces under the new styles */
+/* Money stats: keep the money tab's own fluid size (grid's 2.6rem stat numerals overflowed ₹8,500 at 360-390 px) and
+   proportional figures (tabular commas opened gaps like "₹3 , 600" in Schibsted Grotesk). */
+html:is([data-style="grid"], [data-style="papercut"], [data-style="midnight"]) .money-stats .stat-n { font-size: clamp(1.45rem, 6.2vw, 2rem); font-variant-numeric: proportional-nums lining-nums; }
+/* Midnight: the tab bar sits over list text; at 82% it let labels like "Done & skipped" read through the tabs */
+html[data-style="midnight"] .tabbar { background: color-mix(in srgb, var(--surface) 95%, transparent); }

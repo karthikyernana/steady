@@ -4,12 +4,24 @@ import { query, withOwner } from './db.js';
 import { currentOwner, startSession, endSession, verifyGoogleIdToken, checkPassphrase, tooManyAttempts, logAttempt, hashToken, findOwner, createOwner, setPassword, signupMode, mayCreate, normEmail, validEmail, verifyGithubOidc } from './auth.js';
 import { migrate } from './migrate.js';
 import { sendDue } from './push.js';
+import { AgentError, agentConfig, countUse, transcribe, plan, learnFrom, getMemory, memorySummary, resetMemory } from './agent.js';
+import { scheduleExact, qstashReady } from './qstash.js';
 
-const COLLS = new Set(['tasks', 'goals', 'thoughts', 'checkins', 'meta']);
+const COLLS = new Set(['tasks', 'goals', 'thoughts', 'checkins', 'meta', 'money']);
 const MAX_BODY = 2_000_000;
 
 class HttpError extends Error { constructor(status, msg) { super(msg); this.status = status; } }
 const fail = (s, m) => { throw new HttpError(s, m); };
+
+// raw bodies (audio): Vercel hands application/octet-stream over as a Buffer; locally we read the stream
+async function readRaw(req, max = 4_000_000) {
+  if (+req.headers['content-length'] > max) fail(413, 'That recording is too long. Keep it under 30 seconds.');
+  if (Buffer.isBuffer(req.body)) { if (req.body.length > max) fail(413, 'Too large'); return req.body; }
+  let size = 0; const chunks = [];
+  for await (const ch of req) { size += ch.length; if (size > max) fail(413, 'Too large'); chunks.push(ch); }
+  return Buffer.concat(chunks);
+}
+const RAW = new Set(['agent/transcribe']);
 
 async function readBody(req) {
   if (req.body !== undefined && req.body !== null && typeof req.body === 'object' && !Buffer.isBuffer(req.body)) return req.body;
@@ -46,6 +58,7 @@ const routes = {
     signup: signupMode(),
     googleClientId: process.env.GOOGLE_CLIENT_ID || null,
     vapidPublicKey: process.env.VAPID_PUBLIC_KEY || null,
+    agent: agentConfig(),
   }),
 
   'GET auth/me': async req => { const o = await currentOwner(req); return o ? { signedIn: true, email: o.email } : { signedIn: false }; },
@@ -195,7 +208,9 @@ const routes = {
       }
       if (del.length) await c.query('delete from scheduled_notifications where owner_id = app_owner() and key = any($1)', [del]);
     });
-    return { upserted: up.length, deleted: del.length };
+    // precise trigger (optional): wake the sender at the exact minute instead of waiting for the 5-minute cron
+    const exact = qstashReady() ? await scheduleExact(up.map(r => r.fireAt)).catch(() => ({ scheduled: 0 })) : null;
+    return { upserted: up.length, deleted: del.length, exact: exact?.scheduled ?? null };
   },
   'GET reminders': async req => {
     const o = await me(req);
@@ -230,10 +245,33 @@ const routes = {
     const since = Math.max(0, Number(new URL(req.url, 'http://x').searchParams.get('since_seq')) || 0);
     const rows = await withOwner(t[0].owner_id, async c => (await c.query(
       'select coll, id, data, deleted, schema_version, seq from records where owner_id = app_owner() and seq > $1 order by seq', [since])).rows);
-    const data = { tasks: {}, goals: {}, thoughts: {}, checkins: {}, meta: {} };
+    const data = { tasks: {}, goals: {}, thoughts: {}, checkins: {}, meta: {}, money: {} };
     for (const r of rows) if (!r.deleted) data[r.coll][r.id] = r.data;
     return { app: 'steady', schemaVersion: Math.max(1, ...rows.map(r => r.schema_version)), writtenAt: new Date().toISOString(), readOnly: true, cursor: rows.length ? Number(rows[rows.length - 1].seq) : since, data };
   },
+
+  // ---- voice agent (see server/agent.js). Drafts only: the browser applies what the user accepts. ----
+  'POST agent/transcribe': async (req, res, body) => {
+    requireCsrf(req);
+    const o = await me(req);
+    if (!agentConfig().voice) throw new AgentError(501, 'Voice is not set up on this Steady yet (SARVAM_API_KEY). You can still type.');
+    if (!body?.length) fail(400, 'No audio received.');
+    await countUse(o.id, 'stt');   // counted only when a real, configured transcription is about to run
+    return transcribe(body, String(req.headers['x-audio-type'] || ''));
+  },
+  'POST agent/plan': async (req, res, body) => {
+    requireCsrf(req);
+    const o = await me(req);
+    await countUse(o.id, 'plan');
+    return plan(o.id, { text: body.text, context: body.context, tz: body.tz });
+  },
+  'POST agent/learn': async (req, res, body) => {
+    requireCsrf(req);
+    const o = await me(req);
+    return { ok: true, memory: await learnFrom(o.id, body.pairs) };
+  },
+  'GET agent/memory': async req => { const o = await me(req); return { memory: memorySummary(await getMemory(o.id)) }; },
+  'POST agent/memory/reset': async req => { requireCsrf(req); const o = await me(req); await resetMemory(o.id); return { ok: true }; },
 
   // ---- ops ----
   'POST admin/migrate': async req => {
@@ -259,12 +297,12 @@ export async function handle(req, res) {
     const path = u.pathname.replace(/^\/api\/?/, '').replace(/\/$/, '');
     const fn = routes[`${req.method} ${path}`];
     if (!fn) return send(res, routes[`GET ${path}`] || routes[`POST ${path}`] ? 405 : 404, { error: 'Not found' });
-    const body = req.method === 'POST' ? await readBody(req) : {};
+    const body = req.method === 'POST' ? (RAW.has(path) ? await readRaw(req) : await readBody(req)) : {};
     const out = await fn(req, res, body);
     return send(res, 200, out);
   } catch (e) {
     const status = e.status || (e.code === '42501' ? 403 : 500);
     if (status >= 500) console.error('[steady api]', e);
-    return send(res, status, { error: status >= 500 ? 'Server error' : e.message });
+    return send(res, status, { error: status >= 500 && !e.public ? 'Server error' : e.message });
   }
 }

@@ -14,20 +14,20 @@ export function renderOnboarding() {
   if (st.step === 0) body = `
     <div class="ob-mark">${mark()}</div>
     <h1 class="display xl">Steady.</h1>
-    <p class="lede">A tracker that learns how you work, and meets you where you are. Even on the off days.</p>
+    <p class="lede">A tracker that learns how you work. Even on the off days.</p>
     <form class="form ob-form" data-ob="name"><label class="field"><span>What should I call you?</span><input name="name" value="${esc(st.name)}" placeholder="Your first name" autocomplete="given-name" required autofocus data-testid="ob-name"></label>
     <button class="btn primary lg" type="submit">Continue ${I.arrow}</button></form>
     <button class="link center-link" data-ob-pair>I already use Steady on another device</button>`;
   else if (st.step === 1) body = `
     <div class="eyebrow">Step 2 of 5</div>
     <h1 class="display">What are you working toward, <em>${esc(st.name)}</em>?</h1>
-    <p class="lede">Up to three. Big is fine; I'll help you break them into weeks.</p>
+    <p class="lede">Up to three. I'll break them into weeks.</p>
     <form class="form ob-form" data-ob="goals">${st.goals.map((g, i) => `<label class="field"><span>Goal ${i + 1}${i ? ' (optional)' : ''}</span><input name="g${i}" value="${esc(g)}" placeholder="${['Land my first paying client', 'Ship a product people actually use', 'Read 12 books this year'][i]}" ${i === 0 ? 'autofocus' : ''} data-testid="ob-goal-${i}"></label>`).join('')}
     <div class="row between"><button type="button" class="btn ghost" data-ob-back>Back</button><button class="btn primary lg" type="submit">Continue ${I.arrow}</button></div></form>`;
   else if (st.step === 2) body = `
     <div class="eyebrow">Step 3 of 5</div>
     <h1 class="display">Your <em>rhythm</em>.</h1>
-    <p class="lede">I'll keep reminders and the evening check-in inside your waking hours.</p>
+    <p class="lede">Reminders stay inside your waking hours.</p>
     <form class="form ob-form" data-ob="rhythm"><div class="grid2">
       <label class="field"><span>Usually up by</span><input type="time" name="wake" value="${st.wake}" data-testid="ob-wake" autofocus></label>
       <label class="field"><span>Usually asleep by</span><input type="time" name="sleep" value="${st.sleep}" data-testid="ob-sleep"></label></div>
@@ -36,15 +36,14 @@ export function renderOnboarding() {
     <div class="eyebrow">Step 4 of 5</div>
     <div class="ob-bell">${I.bell}</div>
     <h1 class="display">A nudge at <em>the right moment</em>.</h1>
-    <p class="lede">When a task has a time, Steady can remind you. Never more than you ask for, and never during your sleep hours.</p>
+    <p class="lede">Timed tasks can nudge you. Never while you sleep.</p>
     <div class="ob-preview card"><div class="np-app">${mark(18)} Steady · now</div><strong>LinkedIn post</strong><span class="muted">20 min · due 6 PM</span></div>
     <div class="ob-form"><button class="btn primary lg" data-ob-notif data-testid="ob-notif">${permission() === 'granted' ? 'Reminders are on' : 'Turn on reminders'}</button>
-    <button class="btn ghost" data-ob-skip>Not now</button>
-    <p class="hint small center">On Android, you can also get reminders even when the app is closed. Set it up later in Settings → Phone reminders.</p></div>`;
+    <button class="btn ghost" data-ob-skip>Not now</button></div>`;
   else body = `
     <div class="ob-mark">${mark()}</div>
     <h1 class="display">You're set, <em>${esc(st.name)}</em>.</h1>
-    <p class="lede">Here's the deal: small days count. I'll learn when you do your best work and shrink the list when life gets loud. Start with one thing.</p>
+    <p class="lede">Small days count. I'll learn when you work best and shrink the list when life gets loud. Start with one thing.</p>
     <div class="ob-form"><button class="btn primary lg" data-ob-finish data-testid="ob-finish">Open today ${I.arrow}</button></div>`;
   return `<main class="onboarding" data-step="${st.step}"><div class="ob-inner">${dots}${body}</div></main>`;
 }

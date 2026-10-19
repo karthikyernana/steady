@@ -2,8 +2,8 @@
 // The same shape is used in IndexedDB, in data/state.json in the sync repo, and in JSON exports.
 // Full field reference: docs/DATA_MODEL.md. Bump SCHEMA_VERSION only together with a migration.
 
-export const SCHEMA_VERSION = 1;
-export const COLLECTIONS = ['tasks', 'goals', 'thoughts', 'checkins', 'meta'];
+export const SCHEMA_VERSION = 2;
+export const COLLECTIONS = ['tasks', 'goals', 'thoughts', 'checkins', 'meta', 'money'];
 
 export class NewerSchemaError extends Error {
   constructor(v) { super(`This data was written by a newer Steady (schema ${v}). Update this device to keep syncing.`); this.version = v; }
@@ -15,6 +15,7 @@ const DEFAULTS = {
   goals: { title: '', why: '', target: null, milestones: [], actions: [] },
   thoughts: { text: '', tags: [], mood: 3, kind: 'note' },
   checkins: { date: null, energy: 3, win: '', selfCare: '' },
+  money: { kind: 'expense', amount: 0, category: 'Other', note: '', payee: null, date: null, source: 'manual' },
   meta: {},
 };
 export function normalize(coll, rec) {
@@ -31,6 +32,9 @@ export const MIGRATIONS = {
     for (const t of Object.values(colls.tasks || {})) if (!t.deleted && !t.status) t.status = t.doneAt ? 'done' : 'open';
     return colls;
   },
+  // v1 -> v2 (v1.3): new synced collection `money` (income/expenses in INR). Purely additive; older devices refuse
+  // v2 records ("update this device") instead of crashing on a collection they do not know.
+  2: colls => { colls.money = colls.money || {}; return colls; },
 };
 
 export function docVersion(doc) { return doc ? (doc.schemaVersion ?? doc.schema ?? 0) : SCHEMA_VERSION; }
