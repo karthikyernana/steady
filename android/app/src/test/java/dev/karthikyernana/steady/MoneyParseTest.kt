@@ -23,4 +23,8 @@ class MoneyParseTest {
         assertEquals("Lunch", MoneyParse.parse("five hundred for lunch", today).note)
         org.junit.Assert.assertNull(MoneyParse.parse("thousand thanks", today).amount)
     }
+    @Test fun customCategoryWins() {
+        assertEquals("Gym", MoneyParse.parse("1200 gym fees", today, known = listOf("Gym", "Food")).category)
+        assertEquals("Food", MoneyParse.parse("250 lunch", today, known = listOf("Gym")).category)
+    }
 }

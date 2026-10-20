@@ -1,0 +1,68 @@
+# End-to-end on a real Android emulator (CI job "android-e2e"): fresh install -> create account against the local
+# Steady server -> every tab -> task, goal, money (custom category), thought -> sync to the server (checked by the job).
+appId: dev.karthikyernana.steady.debug
+env:
+  EMAIL: ${EMAIL}
+---
+- launchApp: { clearState: true }
+- tapOn: "Sign in or create account"
+- tapOn: "Email"
+- inputText: ${EMAIL}
+- tapOn: "Continue"
+- extendedWaitUntil: { visible: "Create account", timeout: 20000 }
+- tapOn: "Your name"
+- inputText: "Karthik"
+- tapOn: "Password (8+ characters)"
+- inputText: "correct horse 9"
+- tapOn: "Confirm password"
+- inputText: "correct horse 9"
+- hideKeyboard
+- tapOn: "Create account"
+- extendedWaitUntil: { visible: "Skip", timeout: 20000 }
+- takeScreenshot: shots/e2e-0-guide
+- tapOn: "Skip"
+- runFlow: { when: { visible: "Allow" }, commands: [ { tapOn: "Allow" } ] }
+- runFlow: { when: { visible: "Not now" }, commands: [ { tapOn: "Not now" } ] }
+# Today: add a task with time
+- tapOn: "Add a task… e.g. gym 7pm 45m"
+- inputText: "Emulator check 11:58pm"
+- tapOn: "Add"
+- assertVisible: "Emulator check"
+- takeScreenshot: shots/e2e-1-today
+# Goals
+- tapOn: "Goals"
+- tapOn: "Add a goal"
+- tapOn: "Goal"
+- inputText: "Ship Steady"
+- tapOn: "Add a milestone, e.g. ship portfolio v1"
+- inputText: "Emulator tested"
+- tapOn: "Add"
+- hideKeyboard
+- scrollUntilVisible: { element: "Save", direction: DOWN }
+- tapOn: "Save"
+- assertVisible: "0 of 1 milestones"
+- takeScreenshot: shots/e2e-2-goals
+# Money: quick add with words, then a custom category
+- tapOn: "Money"
+- tapOn: "Add… e.g. 250 lunch swiggy"
+- inputText: "five hundred lunch"
+- tapOn: "Add"
+- assertVisible: "₹500"
+- takeScreenshot: shots/e2e-3-money
+# Thoughts
+- tapOn: "Thoughts"
+- tapOn: "What's on your mind? #idea #startup"
+- inputText: "Emulator thought #qa"
+- hideKeyboard
+- tapOn: "Save"
+- assertVisible: "Emulator thought"
+- takeScreenshot: shots/e2e-4-thoughts
+# Insights + You
+- tapOn: "Insights"
+- assertVisible: "What I've learned about you"
+- takeScreenshot: shots/e2e-5-insights
+- tapOn: "You and settings"
+- assertVisible: "Sync across devices"
+- tapOn: "Sync now"
+- extendedWaitUntil: { visible: "Synced.*", timeout: 30000 }
+- takeScreenshot: shots/e2e-6-you

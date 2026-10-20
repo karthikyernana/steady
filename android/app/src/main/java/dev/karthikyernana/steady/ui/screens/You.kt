@@ -174,7 +174,7 @@ fun DevicesSheet(onClose: () -> Unit) {
                 Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                            Text(d.name, style = Type.bodyM, color = P.ink)
+                            Text(d.name, style = Type.bodyM, color = P.ink, modifier = Modifier.weight(1f, fill = false))
                             if (d.current) { Spacer(Modifier.width(6.dp)); Pill("This device", color = P.accent, bg = P.accentSoft) }
                         }
                         Text(listOfNotNull(d.app.takeIf { it.isNotEmpty() && it != d.name }, d.place ?: "Unknown place").joinToString(" · "), style = Type.small, color = P.ink2)

@@ -77,7 +77,7 @@ class ScreenshotTest {
         shot("$prefix-1-today")
         listOf("goals", "money", "thoughts", "insights").forEachIndexed { i, t -> rule.onNodeWithTag("tab-$t").performClick(); shot("$prefix-${i + 2}-$t") }
         rule.onNodeWithTag("insights").performScrollToNode(hasTestTag("heatmap")); shot("$prefix-6-insights-scrolled")
-        rule.onNodeWithTag("tab-thoughts").performClick(); rule.onAllNodesWithTag("thought")[0].performClick(); shot("$prefix-7-thought-read")
+        rule.onNodeWithTag("tab-thoughts").performClick(); rule.onAllNodesWithTag("thought")[0].performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick); shot("$prefix-7-thought-read")
         rule.activity.onBackPressedDispatcher.onBackPressed()
         rule.onNodeWithTag("you-btn").performClick(); shot("$prefix-8-you")
     }

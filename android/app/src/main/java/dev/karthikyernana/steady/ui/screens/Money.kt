@@ -2,6 +2,7 @@ package dev.karthikyernana.steady.ui.screens
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -73,7 +74,7 @@ fun MoneyScreen() {
     val dayN = if (isNow) Dates.today().dayOfMonth else ym.lengthOfMonth()
     val byCat = entries.filter { !it.isIncome }.groupBy { it.category }.mapValues { (_, v) -> v.sumOf { it.amount } }.entries.sortedByDescending { it.value }
     val budget = c.snap.meta("budgets").num("total")
-    val draft = remember(quick) { if (quick.isBlank()) null else MoneyParse.parse(quick) }
+    val draft = remember(quick, c.snap.version) { if (quick.isBlank()) null else MoneyParse.parse(quick, known = c.snap.money.map { it.category }.distinct()) }
 
     LazyColumn(Modifier.fillMaxSize().testTag("money"), contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 6.dp, bottom = 170.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item(key = "head") { PageHead("MONEY", "Where it ", "goes", ".", moneyLine(c.snap.money, mk, budget), subTag = "money-sub") }
@@ -214,13 +215,18 @@ private fun Stat(value: String, label: String, modifier: Modifier = Modifier, ac
     }
 }
 
+/** Budget rows: the defaults plus every category he has used or budgeted (custom ones included), income ones left out. */
+fun budgetCats(money: List<Money>, budgeted: Set<String>): List<String> =
+    (MoneyParse.CATEGORIES + money.filter { !it.isIncome }.map { it.category } + budgeted).filter { it.isNotBlank() && it !in MoneyParse.INCOME_CATEGORIES }.distinct()
+
 @Composable
 private fun BudgetSheet(current: Double?, onClose: () -> Unit) {
     val c = LocalCtx.current
     val existing = (c.snap.meta("budgets")["categories"] as? kotlinx.serialization.json.JsonObject).orEmpty()
     var v by remember { mutableStateOf(current?.let { fmtAmount(it).replace(",", "") } ?: "") }
+    val catNames = remember { budgetCats(c.snap.money, existing.keys) }
     val cats = remember { androidx.compose.runtime.mutableStateMapOf<String, String>().apply {
-        MoneyParse.CATEGORIES.forEach { k -> put(k, (existing[k] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toDoubleOrNull()?.takeIf { it > 0 }?.let { fmtAmount(it).replace(",", "") } ?: "") } } }
+        catNames.forEach { k -> put(k, (existing[k] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toDoubleOrNull()?.takeIf { it > 0 }?.let { fmtAmount(it).replace(",", "") } ?: "") } } }
     SSheet(onClose, "Monthly budget") {
         Text("A number for all spending, plus limits for any category you want to watch. Steady tells you what's left, never scolds.", style = Type.small, color = P.muted)
         Spacer(Modifier.height(10.dp))
@@ -228,7 +234,7 @@ private fun BudgetSheet(current: Double?, onClose: () -> Unit) {
         Spacer(Modifier.height(12.dp))
         Eyebrow("By category")
         Spacer(Modifier.height(6.dp))
-        MoneyParse.CATEGORIES.chunked(2).forEach { pair ->
+        catNames.chunked(2).forEach { pair ->
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 pair.forEach { k -> SField(cats[k].orEmpty(), { x -> cats[k] = x.filter { it.isDigit() }.take(8) }, k, Modifier.weight(1f), keyboard = KeyboardType.Number, testTag = "budget-$k") }
                 if (pair.size == 1) Spacer(Modifier.weight(1f))
@@ -258,7 +264,7 @@ fun MoneySheet(m: Money?, prefill: dev.karthikyernana.steady.core.MoneyDraft? = 
         if (m == null) {
             SField(quick, { v ->
                 quick = v
-                val d = MoneyParse.parse(v)
+                val d = MoneyParse.parse(v, known = c.snap.money.map { it.category }.distinct())
                 kind = d.kind; d.amount?.let { amount = fmtAmount(it).replace(",", "") }; category = d.category; payee = d.payee ?: ""; note = d.note; date = d.date
             }, "Type it: 250 lunch swiggy", testTag = "money-quick")
             Spacer(Modifier.height(12.dp))
@@ -268,10 +274,23 @@ fun MoneySheet(m: Money?, prefill: dev.karthikyernana.steady.core.MoneyDraft? = 
         SField(amount, { v -> amount = v.filter { it.isDigit() || it == '.' }.take(10) }, "Amount (₹)", keyboard = KeyboardType.Decimal, testTag = "money-amount")
         Spacer(Modifier.height(10.dp))
         val known = (if (kind == "income") MoneyParse.INCOME_CATEGORIES else MoneyParse.CATEGORIES) + c.snap.money.map { it.category }
+        var adding by remember { mutableStateOf(false) }
+        var newCat by remember { mutableStateOf("") }
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            known.distinct().forEach { k ->
+            (known + listOf(category)).filter { it.isNotBlank() }.distinct().forEach { k ->
                 val on = k == category
                 Text(k, style = Type.label, color = if (on) P.accentInk else P.ink2, modifier = Modifier.clip(RoundedCornerShape(999.dp)).background(if (on) P.accent else P.surface2).clickable { category = k }.padding(horizontal = 12.dp, vertical = 8.dp))
+            }
+            // your own categories: type one once, it sticks (it lives on the entries, so it syncs and shows up next time)
+            Text("+ New", style = Type.label, color = P.accent, modifier = Modifier.clip(RoundedCornerShape(999.dp)).border(1.dp, P.line2, RoundedCornerShape(999.dp)).clickable { adding = true }.padding(horizontal = 12.dp, vertical = 8.dp).testTag("cat-new"))
+        }
+        if (adding) {
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                SField(newCat, { newCat = it.take(24) }, "New category, e.g. Gym", Modifier.weight(1f), testTag = "cat-new-name", caps = androidx.compose.ui.text.input.KeyboardCapitalization.Words,
+                    onIme = { val t = newCat.trim(); if (t.isNotEmpty()) { category = t.replaceFirstChar { it.uppercase() }; adding = false; newCat = "" } })
+                Spacer(Modifier.width(8.dp))
+                GhostButton("Use", Modifier.testTag("cat-new-use")) { val t = newCat.trim(); if (t.isNotEmpty()) { category = t.replaceFirstChar { it.uppercase() }; adding = false; newCat = "" } }
             }
         }
         Spacer(Modifier.height(10.dp))

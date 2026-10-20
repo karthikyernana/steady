@@ -102,11 +102,12 @@ fun PageHead(eyebrow: String, before: String, accent: String, after: String = ".
             Eyebrow(eyebrow)
             Spacer(Modifier.height(6.dp))
             Text(androidx.compose.ui.text.buildAnnotatedString {
-                // a one-word lead ("Your week.") never wraps away from its accent word
-                append(if (before.isNotBlank() && !before.trim().contains(' ')) before.trimEnd() + "\u00A0" else before)
+                append(before)
                 pushStyle(androidx.compose.ui.text.SpanStyle(color = P.accent)); append(accent); pop()
                 append(after)
-            }, style = Type.display, color = P.ink)
+            }, style = Type.display, color = P.ink,
+                // a short title ("Your week.") stays on one line; on a real phone it was breaking mid-title
+                softWrap = (before + accent + after).length > 16, maxLines = if ((before + accent + after).length > 16) Int.MAX_VALUE else 1)
             if (sub != null) { Spacer(Modifier.height(6.dp)); Text(sub, style = Type.body.copy(fontSize = 16.sp), color = P.muted, modifier = if (subTag != null) Modifier.testTag(subTag) else Modifier) }
         }
         trailing?.invoke()
@@ -140,7 +141,7 @@ fun SectionHead(title: String, trailing: String? = null, action: String? = null,
 
 @Composable
 fun Pill(text: String, color: Color = P.ink2, bg: Color = P.surface2, modifier: Modifier = Modifier) {
-    Text(text, style = Type.label, color = color, modifier = modifier.clip(RoundedCornerShape(999.dp)).background(bg).padding(horizontal = 10.dp, vertical = 4.dp))
+    Text(text, style = Type.label, color = color, maxLines = 1, softWrap = false, modifier = modifier.clip(RoundedCornerShape(999.dp)).background(bg).padding(horizontal = 10.dp, vertical = 4.dp))
 }
 
 @Composable

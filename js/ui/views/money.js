@@ -133,7 +133,7 @@ export function editEntry(id, preset = {}) {
       <div class="field"><span>Type</span>${segmented('kind', [['expense', 'Expense'], ['income', 'Income']], e.kind)}</div>
       <div class="grid2"><label class="field"><span>Amount (₹)</span><input name="amount" type="number" inputmode="decimal" min="0.01" step="0.01" value="${Number(e.amount) > 0 ? Number(e.amount) : ''}" required autofocus></label>
         <label class="field"><span>Date</span><input type="date" name="date" value="${esc(/^\d{4}-\d{2}-\d{2}$/.test(e.date || '') ? e.date : todayKey())}" max="${todayKey()}"></label></div>
-      <label class="field"><span>Category</span><input name="category" list="m-cats" value="${esc(e.category || '')}" required><datalist id="m-cats">${cats.map(c => `<option value="${esc(c)}">`).join('')}</datalist></label>
+      <label class="field"><span>Category</span><input name="category" list="m-cats" value="${esc(e.category || '')}" placeholder="Pick one or type your own" required><datalist id="m-cats">${cats.map(c => `<option value="${esc(c)}">`).join('')}</datalist></label>
       <div class="grid2"><label class="field"><span>Note</span><input name="note" value="${esc(e.note || '')}" placeholder="Lunch"></label>
         <label class="field"><span>Paid to / from</span><input name="payee" value="${esc(e.payee || '')}" placeholder="Swiggy"></label></div>
       <div class="row between gap form-actions">${id ? `<button type="button" class="btn ghost sm danger-text" data-del>${I.trash}<span>Delete</span></button>` : '<span></span>'}<button class="btn primary" type="submit">Save</button></div></form>`,
@@ -153,7 +153,7 @@ export function editEntry(id, preset = {}) {
 
 function editBudget() {
   const bd = budgets();
-  const cats = [...new Set([...Object.keys(bd.categories), ...knownCategories().filter(c => !INCOME_CATEGORIES.includes(c)), ...DEFAULT_CATEGORIES.slice(0, 4)])].slice(0, 10);
+  const cats = [...new Set([...DEFAULT_CATEGORIES, ...knownCategories().filter(c => !INCOME_CATEGORIES.includes(c)), ...Object.keys(bd.categories)])];   // every category, his own ones included
   openSheet({
     title: 'Monthly budget',
     body: `<p class="muted">Optional. Only used to show what’s left.</p>

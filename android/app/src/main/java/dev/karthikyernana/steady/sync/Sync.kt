@@ -152,18 +152,22 @@ class Sync(private val store: Store, private val api: Api, private val scope: Co
     fun startLive() {
         if (!signedIn || liveJob?.isActive == true) return
         liveJob = scope.launch {
-            var backoff = 0L
+            var backoff = 0L; var misses = 0
             syncNow()
             while (isActive && signedIn) {
                 try {
                     val r = api.call("GET", "sync/wait?since=${store.local("syncCursor") ?: "0"}", timeoutSec = 35)
-                    backoff = 0
+                    backoff = 0; misses = 0
+                    // reachable again: an old "couldn't reach" must not linger (it used to stay until the next manual sync)
+                    if (_status.value.state == State.OFFLINE || _status.value.state == State.ERROR) syncNow()
                     if (_status.value.state == State.OK || _status.value.state == State.IDLE) set(State.LIVE)
                     if (r.bool("changed") == true) syncNow()
                 } catch (e: ApiError) {
                     if (e.status == 401) { expired(); return@launch }
+                    misses++
                     backoff = (if (backoff == 0L) 2000L else backoff * 2).coerceAtMost(60_000L)
-                    if (e.status == 0) set(State.OFFLINE, e.message)
+                    // one dropped long-poll on a mobile network is normal; say offline only when it keeps failing
+                    if (e.status == 0 && misses >= 2) set(State.OFFLINE, e.message)
                     delay(backoff)
                 }
             }

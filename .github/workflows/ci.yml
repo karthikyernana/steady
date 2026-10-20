@@ -56,3 +56,78 @@ jobs:
         with: { name: android-test-reports, path: "android/app/build/reports/tests/" }
       - if: failure()
         run: tail -50 dev.log mock.log || true
+
+  # Android end-to-end on a real emulator (API 34, x86_64, KVM): installs the debug app, signs up against the
+  # local Steady server, walks every tab with Maestro, then checks the server really received the data.
+  android-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:17
+        env: { POSTGRES_USER: steady, POSTGRES_PASSWORD: steady, POSTGRES_DB: steady }
+        ports: ["5433:5432"]
+        options: --health-cmd "pg_isready -U steady" --health-interval 5s --health-retries 20
+    env:
+      DATABASE_URL: postgres://steady:steady@localhost:5433/steady
+      EMAIL: e2e-${{ github.run_id }}@example.com
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm ci --ignore-scripts
+      - name: Start local Steady (AI mocked)
+        run: |
+          node scripts/migrate.mjs
+          nohup node tests/mocks/ai-mock.mjs 8791 > mock.log 2>&1 &
+          PORT=8790 SARVAM_BASE_URL=http://127.0.0.1:8791 GEMINI_BASE_URL=http://127.0.0.1:8791 SARVAM_API_KEY=x GEMINI_API_KEY=x nohup node scripts/dev-server.mjs > dev.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf localhost:8790/api/config && break; sleep 1; done
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 17 }
+      - uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: "8.11.1" }
+      - name: Build debug app pointed at the host server
+        working-directory: android
+        run: STEADY_API_BASE=http://10.0.2.2:8790/api/ gradle --no-daemon assembleDebug
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+      - name: Install Maestro
+        run: |
+          curl -fsSL "https://get.maestro.mobile.dev" | bash
+          echo "$HOME/.maestro/bin" >> $GITHUB_PATH
+      - name: Emulator run
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: |
+            adb install -r android/app/build/outputs/apk/debug/app-debug.apk
+            mkdir -p shots
+            maestro test --format junit --output e2e-report.xml -e EMAIL=$EMAIL android/e2e/steady.yaml || (adb logcat -d | grep -iE "steady|AndroidRuntime" | tail -200 > logcat.txt; exit 1)
+      - name: Server received the phone's data
+        run: |
+          node -e "
+          const pg=require('pg');const c=new pg.Client(process.env.DATABASE_URL);
+          (async()=>{await c.connect();
+            const o=(await c.query('select id from owners where email=\$1',[process.env.EMAIL])).rows[0];
+            if(!o) throw new Error('account not on server');
+            await c.query("select set_config('app.owner_id',\$1,false)",[o.id]); const r=(await c.query('select coll, count(*)::int n from records where owner_id=\$1 group by coll',[o.id])).rows;
+            console.log(r); const n=Object.fromEntries(r.map(x=>[x.coll,x.n]));
+            for (const k of ['tasks','goals','money','thoughts']) if(!(n[k]>0)) throw new Error('no '+k+' synced');
+            await c.end();})().catch(e=>{console.error(e);process.exit(1)});"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-e2e
+          if-no-files-found: warn
+          path: |
+            shots/
+            e2e-report.xml
+            logcat.txt
+            dev.log

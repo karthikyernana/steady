@@ -27,7 +27,10 @@ object MoneyParse {
     private val INCOME_RE = ci("\\b(got|received|recieved|credited|earned|salary|stipend|income|paid me|refund|cashback)\\b|వచ్చింది|వచ్చాయి|జీతం")
     private val AMOUNT = ci("(?:₹|rs\\.?|inr)?\\s*(\\d+(?:,\\d{2,3})*(?:\\.\\d{1,2})?)\\s*(k|lakh|lakhs|lac)?\\b")
 
-    fun category(text: String, kind: String): String {
+    fun category(text: String, kind: String, known: List<String> = emptyList()): String {
+        // his own categories win when named ("300 gym" -> Gym)
+        known.filter { it !in CATEGORIES && it !in INCOME_CATEGORIES && it.isNotBlank() }
+            .firstOrNull { Regex("(?<![\\p{L}\\d])${Regex.escape(it.lowercase())}(?![\\p{L}\\d])").containsMatchIn(text.lowercase()) }?.let { return it }
         for ((c, re) in if (kind == "income") INCOME_KW else KEYWORDS) if (re.containsMatchIn(text)) return c
         return if (kind == "income") "Other income" else "Other"
     }
@@ -66,7 +69,7 @@ object MoneyParse {
         return null
     }
 
-    fun parse(input: String, today: LocalDate = Dates.today()): MoneyDraft {
+    fun parse(input: String, today: LocalDate = Dates.today(), known: List<String> = emptyList()): MoneyDraft {
         val text = input.trim()
         var kind = if (INCOME_RE.containsMatchIn(text) && !ci("\\b(spent|paid|bought)\\b").containsMatchIn(text)) "income" else "expense"
         var rest = text; var date = today
@@ -85,7 +88,7 @@ object MoneyParse {
         }
         if (amount == null) wordsAmount(rest)?.let { (v, used) -> amount = v; rest = rest.replaceFirst(used, " ") }
         val p = payee(text)
-        val cat = category(text, kind)
+        val cat = category(text, kind, known)
         var note = rest.replace(ci("\\b(spent|spend|paid|pay|bought|on|for|rs|inr|rupees?|got|received|credited|from|to|the|a|an|i|my|at|today|via|by|upi|cash)\\b|₹"), " ")
         if (p != null) note = note.replace(ci("\\b${Regex.escape(p)}\\b"), " ")
         note = note.replace(Regex("\\s+"), " ").trim()
