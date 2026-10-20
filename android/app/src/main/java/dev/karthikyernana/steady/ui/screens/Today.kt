@@ -3,6 +3,8 @@ package dev.karthikyernana.steady.ui.screens
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.border
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.material.icons.outlined.Spa
@@ -64,7 +66,7 @@ fun setStatus(c: Ctx, t: Task, status: String) {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun TodayScreen(onCheckin: () -> Unit) {
+fun TodayScreen() {
     val c = LocalCtx.current
     val s = c.snap
     val tk = Dates.todayKey()
@@ -193,8 +195,12 @@ private fun Composer() {
             Button(onClick = ::submit, enabled = parsed != null, shape = RoundedCornerShape(999.dp), colors = ButtonDefaults.buttonColors(containerColor = P.ink, contentColor = P.ground),
                 modifier = Modifier.testTag("qa-add")) { Text("Add", style = Type.bodyM) }
         }
-        if (parsed != null && parsed.chips.isNotEmpty()) Row(Modifier.padding(start = 14.dp, end = 14.dp, bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        val sg = remember(parsed?.title, parsed?.dueTime, s.version) { if (parsed != null && parsed.dueTime == null && parsed.title.isNotBlank()) Engine.suggestTime(parsed.title, s, Engine.analyze(s)) else null }
+        if (parsed != null && (parsed.chips.isNotEmpty() || sg != null)) Row(Modifier.padding(start = 14.dp, end = 14.dp, bottom = 12.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             parsed.chips.take(4).forEach { Pill(it, color = P.accent, bg = P.accentSoft) }
+            // a suggested time, one tap to use it
+            sg?.let { (t, why) -> Text("+ ${Dates.fmtTime(t)}, $why", style = Type.label.copy(fontSize = 12.sp), color = P.ink2, maxLines = 1,
+                modifier = Modifier.clip(RoundedCornerShape(999.dp)).border(1.dp, P.line2, RoundedCornerShape(999.dp)).clickable { text = "${text.trim()} at $t" }.padding(horizontal = 10.dp, vertical = 5.dp).testTag("qa-suggest")) }
         }
     }
 }

@@ -213,6 +213,7 @@ const routes = {
     const del = Array.isArray(body.delete) ? body.delete.slice(0, 500).map(String) : [];
     await withOwner(o.id, async c => {
       for (const r of up) {
+        if (typeof r.key === 'string' && r.key.startsWith('st-checkin-')) continue;
         if (typeof r.key !== 'string' || !r.key || !Number.isFinite(r.fireAt) || typeof r.title !== 'string') fail(400, 'Malformed reminder');
         await c.query(
           `insert into scheduled_notifications (owner_id, key, fire_at, title, body, url, tag) values ($1, $2, to_timestamp($3 / 1000.0), $4, $5, $6, $7)
@@ -221,6 +222,8 @@ const routes = {
           [o.id, r.key.slice(0, 160), r.fireAt, r.title.slice(0, 200), String(r.body || '').slice(0, 500), r.url || null, r.tag || null]);
       }
       if (del.length) await c.query('delete from scheduled_notifications where owner_id = app_owner() and key = any($1)', [del]);
+      // the evening check-in nudge is retired (v1.4): drop any still-queued ones, whichever client queued them
+      await c.query("delete from scheduled_notifications where owner_id = app_owner() and key like 'st-checkin-%' and sent_at is null");
     });
     const trig = await triggerFor(up.map(r => r.fireAt));
     return { upserted: up.length, deleted: del.length, exact: trig.exact, trigger: trig.mode };

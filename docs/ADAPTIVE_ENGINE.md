@@ -15,13 +15,13 @@ Inputs are live records only. "Completion" = task with `status: done` and `doneA
 | **Minimum viable day** | On a slump, offer a small day: up to 3 open tasks of ≤ 30 min, shortest first (ties: higher priority); if none are that small, just the single smallest. Everything else folds under "can wait". With nothing planned, offer two tiny starters from goal actions. | `MVD_MAX = 3`, `MVD_TINY_MIN = 30` |
 | **Reminder time suggestion** | Words ≥ 4 letters in the title are matched against completed tasks; with ≥ 3 matches, suggest the median completion time rounded to 15 min ("when you usually do this"); otherwise the best window start + 30 min ("your best hours"). | `SUGGEST_MIN_SIMILAR = 3` |
 | **Streaks** | A day is active if anything was completed or a check-in was logged. Current streak counts back from today (or yesterday if today is still empty). | |
-| **Energy vs output** | Check-in energy against completions that day; mean per energy level. Stated if high (4) vs low (1–2) ratio ≥ 1.4. | `ENERGY_RATIO = 1.4` |
+| **Energy vs output** | Check-in energy against completions that day; mean per energy level. Computed from old check-ins only; no longer stated (check-in retired in v1.4). | `ENERGY_RATIO = 1.4` |
 | **Task size** | Completion rate of tasks ≤ 20 min vs > 45 min (≥ 5 and ≥ 3 samples); stated if gap ≥ 15 pts. | `SHORT_TASK_MIN`, `LONG_TASK_MIN`, `SIZE_GAP` |
-| **Self-care effect** | Next-day completion rate after check-ins with vs without a self-care note (≥ 6 samples); stated if gap ≥ 10 pts. | `SELFCARE_MIN_N`, `SELFCARE_GAP` |
-| **Check-in window** | Card shows from min(sleep − 3 h, 18:00) until 04:00 (sleep after midnight handled). Nudge fires at max(sleep − 90 min, 19:00). | |
+| **Self-care effect** | Next-day completion rate after check-ins with vs without a self-care note. Computed from old check-ins only; no longer stated (v1.4). | `SELFCARE_MIN_N`, `SELFCARE_GAP` |
+| **Evening check-in** | Retired in v1.4 (web and Android): no card, sheet, nudge or reminder. The `checkins` collection stays in the data model so old records still sync, merge, count toward streaks and the slump signal. | |
 
 ## "What I've learned" panel
-Plain sentences generated from the signals above, in this order: hours, weekdays, load, energy, size, self-care, streak, check-in habit. Each has a short evidence line ("60 % of completions in the last 60 days").
+Plain sentences generated from the signals above, in this order: hours, weekdays, load, size, streak. Each has a short evidence line ("60 % of completions in the last 60 days").
 
 ## Voice (Today subtitle)
 `todayLine()` picks the first matching line: all done → late (within 45 min of sleep) → small day → welcome back → low energy yesterday → nothing planned → in best window / best window within 3 h → streak ≥ 3 → progress → default. Tone: calm, specific, never guilt.

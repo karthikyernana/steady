@@ -3,6 +3,29 @@
 All notable changes to Steady. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 The data contract has its own version (`schemaVersion`, see docs/DATA_MODEL.md); an app release that changes it must ship a migration.
 
+## [1.4.0] - 2026-10-20
+
+Web and the native Android app (also 1.4.0) now match screen for screen.
+
+### Added
+- Devices: see every signed-in device and sign out one or all others (You > Devices); changing the password signs out the rest.
+- Insights redesigned: four stat tiles with week-over-week change, "What I've learned", a full-width consistency calendar,
+  weekday and time-of-day charts, then goals, money and thoughts cards when they have data.
+- Readable thoughts: AI-pasted notes with LaTeX, Markdown, tables and numbered headings are shown cleanly (the saved text is
+  never changed); long notes clamp to 7 lines with Show more, and a tap opens a read view with Edit and Delete.
+- Today: a day strip under the add box (next timed task with a live countdown and the day as a timeline).
+- A six-page first-run guide, re-openable from You > How Steady works.
+- Android: small-day offers after heavy days, lighten-today, goal shortcut chips, per-category budgets and a day-by-day
+  spending chart, amounts in words (English and Telugu), suggested times, a row-by-row milestone editor, JSON export/import,
+  editable voice drafts with an offline fallback, and a side rail in landscape.
+
+### Removed
+- The evening check-in (card, sheet, nudge and its reminders). Existing check-in records are kept and still count toward streaks;
+  the server drops any check-in reminder still queued.
+
+### Changed
+- The bottom bar is near-opaque with a soft fade behind it, so text never shows through the icons.
+
 ## [1.3.1] - 2026-10-20
 
 ### Fixed

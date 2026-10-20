@@ -15,4 +15,12 @@ class MoneyParseTest {
     @Test fun thousands() { assertEquals(2500.0, MoneyParse.parse("2.5k rent", today).amount); assertEquals(1500.0, MoneyParse.parse("₹1,500 books", today).amount) }
     @Test fun indianGrouping() { assertEquals("1,23,456", fmtAmount(123456.0)); assertEquals("999", fmtAmount(999.0)); assertEquals("12,345.50", fmtAmount(12345.5)) }
     @Test fun tags() { assertEquals(listOf("work", "ఆలోచన"), tagsIn("idea #work and #ఆలోచన but not C# or a#b")) }
+    @Test fun amountsInWords() {
+        assertEquals(500.0, MoneyParse.parse("five hundred for lunch", today).amount)
+        assertEquals(2550.0, MoneyParse.parse("paid two thousand five hundred and fifty rent", today).amount)
+        assertEquals(500.0, MoneyParse.parse("ఐదు వందలు టీ", today).amount)
+        assertEquals(2500.0, MoneyParse.parse("rendu velu aidu vandalu shopping", today).amount)
+        assertEquals("Lunch", MoneyParse.parse("five hundred for lunch", today).note)
+        org.junit.Assert.assertNull(MoneyParse.parse("thousand thanks", today).amount)
+    }
 }

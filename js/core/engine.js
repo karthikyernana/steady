@@ -25,7 +25,8 @@ export const RULES = Object.freeze({
 
 const MIN_DATA = RULES.MIN_DATA;
 
-// data: { tasks, checkins, thoughts } arrays of live (non-deleted) records
+// data: { tasks, checkins, thoughts } arrays of live (non-deleted) records.
+// The evening check-in is retired from the UI (v1.4); old check-ins still count toward streaks and the slump signal.
 export function analyzeData(data, now = new Date()) {
   const today = dateKey(now);
   const tasks = data.tasks || [];
@@ -166,19 +167,11 @@ function remember(a) {
     out.push({ k: 'days', text: `${DAYS[a.bestDay.i]}s are your strongest day. ${DAYS[a.worstDay.i]}s run lighter.`, detail: `${pct(a.bestDay.r)} vs ${pct(a.worstDay.r)} of planned tasks done.` });
   if (a.avgDone >= 1)
     out.push({ k: 'load', text: `You usually finish about ${Math.round(a.avgDone)} things a day. Planning around ${a.loadCap} keeps days winnable.`, detail: 'Based on the last 14 days.' });
-  const hi = a.byEnergy[3] ?? a.byEnergy[4], lo = a.byEnergy[0] ?? a.byEnergy[1];
-  if (hi !== null && lo !== null && lo > 0 && hi / lo >= 1.4)
-    out.push({ k: 'energy', text: `On high-energy days you get through ${(hi / lo).toFixed(1)}× as much as on low ones. Protect your sleep.`, detail: 'From your evening check-ins.' });
   const de = a.durationEffect;
   if (de.short !== null && de.long !== null && de.nShort >= 5 && de.nLong >= 3 && de.short - de.long >= 0.15)
     out.push({ k: 'size', text: `Small tasks stick. Under 20 minutes you finish ${pct(de.short)}; over 45 minutes, ${pct(de.long)}.`, detail: 'Break big ones down.' });
-  const sc = a.selfCare;
-  if (sc.with !== null && sc.without !== null && sc.n >= 6 && sc.with - sc.without >= 0.1)
-    out.push({ k: 'care', text: `When you do something for yourself in the evening, the next day goes better (${pct(sc.with)} vs ${pct(sc.without)} done).` });
   if (a.streak.longest >= 3)
     out.push({ k: 'streak', text: a.streak.current >= 2 ? `You're on a ${a.streak.current}-day run. Your best so far is ${a.streak.longest}.` : `Your best run so far is ${a.streak.longest} days in a row. One small thing today starts the next one.` });
-  if (a.checkinCount14 >= 4)
-    out.push({ k: 'checkin', text: `You've checked in ${a.checkinCount14} of the last 14 evenings.` });
   return out;
 }
 
@@ -215,12 +208,3 @@ export function tinyFromGoals(goals = []) {
   if (!out.length) out.push('Drink a glass of water and plan tomorrow in one line', 'Five minutes on the thing that matters most');
   return out.slice(0, 2);
 }
-
-export function isCheckinTime(now = new Date(), p = {}) {
-  let sleep = toMin(p.sleep || '23:30');
-  if (sleep < 6 * 60) sleep += 1440; // sleeping after midnight
-  const n = now.getHours() * 60 + now.getMinutes();
-  const start = Math.min(sleep - 180, 18 * 60);
-  return n >= start || n < 4 * 60;
-}
-

@@ -87,7 +87,10 @@ def onboard(pg, name='Karthik', goals=('Land my first paying client', 'Gym 4× a
     if notif == 'grant': pg.click('[data-testid=ob-notif]')
     else: pg.click('[data-ob-skip]')
     pg.wait_for_selector('[data-testid=ob-finish]'); snap('onb-4-done')
-    pg.click('[data-testid=ob-finish]'); pg.wait_for_selector('#qa')
+    pg.click('[data-testid=ob-finish]'); pg.wait_for_selector('[data-testid=guide]'); snap('onb-5-guide')
+    pg.keyboard.press('ArrowRight'); pg.wait_for_timeout(400)
+    record('first-run guide: opens after onboarding, keyboard moves pages', 'onboarding', pg.locator('.guide-dots i.on').count() == 1 and pg.locator('.guide-dots i').nth(1).get_attribute('class') == 'on')
+    pg.click('[data-testid=guide-skip]'); pg.wait_for_selector('.guide', state='detached'); pg.wait_for_selector('#qa')
 
 def go(pg, route):
     pg.evaluate(f"location.hash = '#/{route}'"); pg.wait_for_selector(f'.v-{route}'); pg.wait_for_timeout(250)
@@ -216,25 +219,19 @@ def core_flow(browser, vp, scheme):
         pg.fill('#th-text', 'Felt scattered today, too many tabs #reflection'); pg.click('.mood.m2'); pg.click('#tf-cap button[type=submit]'); pg.wait_for_timeout(250)
         th = pg.evaluate("window.__steady.all('thoughts')")
         pg.fill('#th-q', 'scattered'); pg.wait_for_timeout(250)
-        n_search = pg.locator('.thought').count()
+        n_search = pg.locator(".thought-list .thought").count()
         pg.fill('#th-q', ''); pg.wait_for_timeout(200)
         pg.click('[data-act=th-tag][data-tag=idea]'); pg.wait_for_timeout(200)
-        n_tag = pg.locator('.thought').count()
+        n_tag = pg.locator(".thought-list .thought").count()
         ok = len(th) == 2 and any(t['mood'] == 5 and t['kind'] == 'idea' and 'startup' in t['tags'] for t in th) and n_search == 1 and n_tag == 1
         record('thoughts: capture with tags + mood, search, tag filter', cfg, ok, f'{n_search},{n_tag}')
         pg.click('[data-act=th-tag][data-tag=idea]'); pg.wait_for_timeout(200)
         shot_and_audit(pg, 'thoughts-populated', cfg, run_axe=full)
 
-        # check-in: move the clock to 21:30 IST so the evening card shows
-        pg.clock.set_fixed_time('2026-10-16T21:30:00+05:30')
+        # the evening check-in is retired: no card on Today, even late in the evening (21:30 IST)
+        pg.clock.set_fixed_time(1792166400)  # epoch seconds: Fri 2026-10-16 21:30 IST
         go(pg, 'goals'); go(pg, 'today')
-        has_cta = pg.locator('[data-testid=checkin-cta]').count() == 1
-        pg.click('[data-act=checkin]'); pg.wait_for_selector('#cf')
-        pg.click('[data-seg=energy] button[data-v="4"]'); pg.fill('#cf input[name=win]', 'Shipped the hero section'); pg.fill('#cf input[name=selfCare]', 'Evening walk')
-        shot_and_audit(pg, 'sheet-checkin', cfg, run_axe=full)
-        pg.click('#cf button[type=submit]'); pg.wait_for_timeout(300)
-        ci = pg.evaluate("window.__steady.all('checkins')[0]")
-        record('evening check-in (energy, win, self-care)', cfg, has_cta and ci and ci['energy'] == 4 and ci['win'] and ci['selfCare'] and pg.locator('[data-testid=checkin-cta]').count() == 0)
+        record('no evening check-in card (retired)', cfg, pg.locator('[data-testid=checkin-cta]').count() == 0 and pg.locator('[data-act=checkin]').count() == 0)
 
         # insights empty-ish, then seeded 30 days
         go(pg, 'insights'); shot_and_audit(pg, 'insights-learning', cfg)
@@ -242,8 +239,9 @@ def core_flow(browser, vp, scheme):
         rem = pg.locator('.remember-list li').count()
         texts = pg.inner_text('.remember-list')
         ok = rem >= 4 and pg.locator('[data-testid=heatmap] rect').count() > 100 and pg.locator('[data-testid=weekday] rect').count() == 7 \
-             and pg.locator('[data-testid=hours] rect').count() == 24 and pg.locator('[data-testid=scatter] circle').count() >= 10 and 'between 9' in texts
-        record('insights render with seeded 30-day data (remember, heatmap, weekday, hours, scatter)', cfg, ok, texts[:300])
+             and pg.locator('[data-testid=hours] rect').count() == 24 and pg.locator('[data-testid^=st-]').count() == 4 and 'between 9' in texts \
+             and 'checked in' not in texts and pg.locator('[data-testid=scatter]').count() == 0
+        record('insights render with seeded 30-day data (stats, remember, heatmap, weekday, hours)', cfg, ok, texts[:300])
         shot_and_audit(pg, 'insights-populated', cfg, run_axe=full)
         pg.evaluate('window.scrollTo(0, 99999)'); pg.wait_for_timeout(200); shot_and_audit(pg, 'insights-bottom', cfg)
         pg.evaluate('window.scrollTo(0, 0)')

@@ -117,11 +117,39 @@ fun MoneyScreen() {
                 }
             }
         }
+        // budget: all spending + any per-category limits, with pace against how far the month has gone
+        val catBudgets = (c.snap.meta("budgets")["categories"] as? kotlinx.serialization.json.JsonObject).orEmpty()
+            .mapNotNull { (k, v) -> (v as? kotlinx.serialization.json.JsonPrimitive)?.content?.toDoubleOrNull()?.takeIf { it > 0 }?.let { k to it } }
+        if ((budget != null && budget > 0) || catBudgets.isNotEmpty()) item(key = "budget") {
+            val elapsed = if (isNow) Dates.today().dayOfMonth.toDouble() / ym.lengthOfMonth() else 1.0
+            val lines = listOfNotNull(budget?.takeIf { it > 0 }?.let { Triple("All spending", it, spent) }) +
+                catBudgets.map { (k, lim) -> Triple(k, lim, byCat.firstOrNull { it.key == k }?.value ?: 0.0) }.sortedByDescending { it.third / it.second }
+            SCard(Modifier.testTag("budget-card")) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Budget", style = Type.bodyM.copy(fontSize = 16.sp), color = P.ink, modifier = Modifier.weight(1f))
+                    TextButton(onClick = { budgetOpen = true }, contentPadding = PaddingValues(horizontal = 6.dp)) { Text("Edit", style = Type.label, color = P.accent) }
+                }
+                lines.forEach { (name, lim, used) ->
+                    val frac = used / lim; val over = used > lim; val ahead = !over && frac - elapsed > 0.1
+                    Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+                        Row {
+                            Text(name, style = Type.body.copy(fontSize = 15.sp), color = P.ink, modifier = Modifier.weight(1f))
+                            Text(if (over) "${inr(used - lim)} over" else "${inr(lim - used)} left", style = Type.small, color = if (over) P.warn else P.ink2)
+                        }
+                        Spacer(Modifier.height(5.dp))
+                        Box(Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(3.dp)).background(P.line)) {
+                            Box(Modifier.fillMaxWidth(frac.toFloat().coerceIn(0.02f, 1f)).fillMaxHeight().clip(RoundedCornerShape(3.dp)).background(if (over) P.warn else if (ahead) P.hi else P.accent))
+                        }
+                        Text("${inr(used)} of ${inr(lim)}" + if (ahead) " · a little ahead of the month" else "", style = Type.small.copy(fontSize = 12.sp), color = P.muted, modifier = Modifier.padding(top = 3.dp))
+                    }
+                }
+            }
+        }
         item(key = "cats") {
             SCard {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("By category", style = Type.bodyM.copy(fontSize = 16.sp), color = P.ink, modifier = Modifier.weight(1f))
-                    TextButton(onClick = { budgetOpen = true }, contentPadding = PaddingValues(horizontal = 6.dp)) { Text(if (budget != null && budget > 0) "Budget ${inr(budget)}" else "Set a budget", style = Type.label.copy(textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline), color = P.accent) }
+                    if ((budget == null || budget <= 0) && catBudgets.isEmpty()) TextButton(onClick = { budgetOpen = true }, contentPadding = PaddingValues(horizontal = 6.dp)) { Text("Set a budget", style = Type.label.copy(textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline), color = P.accent) }
                 }
                 if (byCat.isEmpty()) Text("Nothing spent this month.", style = Type.small, color = P.muted)
                 byCat.take(10).forEach { (cat, v) ->
@@ -137,6 +165,17 @@ fun MoneyScreen() {
                         }
                     }
                 }
+            }
+        }
+        if (spent > 0) item(key = "daily") {
+            val today = Dates.today().dayOfMonth
+            val byDay = (1..ym.lengthOfMonth()).map { d -> val k = ym.atDay(d).toString(); entries.filter { !it.isIncome && it.date == k }.sumOf { it.amount }.toFloat() }
+            val peak = byDay.withIndex().maxByOrNull { it.value }
+            SCard(Modifier.testTag("money-daily")) {
+                Text("Day by day", style = Type.bodyM.copy(fontSize = 16.sp), color = P.ink)
+                peak?.takeIf { it.value > 0 }?.let { Text("Biggest day: ${it.index + 1} ${ym.month.getDisplayName(TextStyle.SHORT, Locale.ENGLISH)}, ${inr(it.value.toDouble())}.", style = Type.small, color = P.muted) }
+                Spacer(Modifier.height(10.dp))
+                Bars(byDay.mapIndexed { i, v -> if (isNow && i + 1 > today) 0f else v }, byDay.indices.map { i -> if (i == 0 || (i + 1) % 7 == 0) "${i + 1}" else "" }, height = 90.dp, highlightLast = false, highlight = if (isNow) today - 1 else -1)
             }
         }
         if (entries.isEmpty()) item(key = "empty") { EmptyNote("Nothing logged this month.", "Type \"250 lunch swiggy\" above, or just say it to the mic.") }
@@ -178,14 +217,30 @@ private fun Stat(value: String, label: String, modifier: Modifier = Modifier, ac
 @Composable
 private fun BudgetSheet(current: Double?, onClose: () -> Unit) {
     val c = LocalCtx.current
+    val existing = (c.snap.meta("budgets")["categories"] as? kotlinx.serialization.json.JsonObject).orEmpty()
     var v by remember { mutableStateOf(current?.let { fmtAmount(it).replace(",", "") } ?: "") }
+    val cats = remember { androidx.compose.runtime.mutableStateMapOf<String, String>().apply {
+        MoneyParse.CATEGORIES.forEach { k -> put(k, (existing[k] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toDoubleOrNull()?.takeIf { it > 0 }?.let { fmtAmount(it).replace(",", "") } ?: "") } } }
     SSheet(onClose, "Monthly budget") {
-        Text("One number for all spending in a month. Steady tells you what's left, never scolds.", style = Type.small, color = P.muted)
+        Text("A number for all spending, plus limits for any category you want to watch. Steady tells you what's left, never scolds.", style = Type.small, color = P.muted)
         Spacer(Modifier.height(10.dp))
-        SField(v, { x -> v = x.filter { it.isDigit() }.take(9) }, "Budget (₹)", keyboard = KeyboardType.Number)
-        Spacer(Modifier.height(14.dp))
-        PrimaryButton("Save", Modifier.fillMaxWidth()) { c.app.store.setMeta("budgets", "total" to (v.toDoubleOrNull()?.takeIf { it > 0 })); onClose() }
-        if (current != null) { Spacer(Modifier.height(8.dp)); GhostButton("Remove budget", Modifier.fillMaxWidth()) { c.app.store.setMeta("budgets", "total" to null); onClose() } }
+        SField(v, { x -> v = x.filter { it.isDigit() }.take(9) }, "All spending (₹ a month)", keyboard = KeyboardType.Number, testTag = "budget-total")
+        Spacer(Modifier.height(12.dp))
+        Eyebrow("By category")
+        Spacer(Modifier.height(6.dp))
+        MoneyParse.CATEGORIES.chunked(2).forEach { pair ->
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                pair.forEach { k -> SField(cats[k].orEmpty(), { x -> cats[k] = x.filter { it.isDigit() }.take(8) }, k, Modifier.weight(1f), keyboard = KeyboardType.Number, testTag = "budget-$k") }
+                if (pair.size == 1) Spacer(Modifier.weight(1f))
+            }
+            Spacer(Modifier.height(6.dp))
+        }
+        Spacer(Modifier.height(10.dp))
+        PrimaryButton("Save budget", Modifier.fillMaxWidth().testTag("budget-save")) {
+            val obj = kotlinx.serialization.json.buildJsonObject { cats.forEach { (k, x) -> x.toDoubleOrNull()?.takeIf { it > 0 }?.let { put(k, it) } } }
+            c.app.store.setMeta("budgets", "total" to (v.toDoubleOrNull()?.takeIf { it > 0 }), "categories" to obj); onClose()
+        }
+        if (current != null || existing.isNotEmpty()) { Spacer(Modifier.height(8.dp)); GhostButton("Remove budget", Modifier.fillMaxWidth()) { c.app.store.setMeta("budgets", "total" to null, "categories" to kotlinx.serialization.json.JsonObject(emptyMap())); onClose() } }
     }
 }
 

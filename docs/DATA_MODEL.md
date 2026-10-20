@@ -50,6 +50,7 @@ Milestones and actions live inside the goal record, so they merge with the goal 
 
 ### checkins
 `date` (`YYYY-MM-DD`), `energy` (1–5), `win` (string), `selfCare` (string). One per day (`id = ci-<date>`).
+The evening check-in UI is retired (v1.4); the collection is kept so existing records still sync and merge.
 
 ### money (schemaVersion 2, Steady 1.3)
 | Field | Type | Default | Meaning |
@@ -67,7 +68,7 @@ Milestones and actions live inside the goal record, so they merge with the goal 
 | --- | --- |
 | `profile` | `name`, `wake` (`HH:MM`), `sleep` (`HH:MM`, may be after midnight), `onboarded`, `onboardedAt` |
 | `budgets` | `total` (₹ per month, 0 = none), `categories` (`{ [category]: ₹ per month }`) — optional |
-| `settings` | `reminderLead` (min), `checkinNudge` (bool), `defaultReminder` (bool), `ntfyEnabled` (bool), `ntfyTopic` (string), `ntfyServer` (URL) |
+| `settings` | `reminderLead` (min), `checkinNudge` (bool, unused since v1.4), `defaultReminder` (bool), `ntfyEnabled` (bool), `ntfyTopic` (string), `ntfyServer` (URL) |
 
 ### Device-only (never synced; IndexedDB store `local`)
 `syncRepo`, `syncToken`, `syncSha`, `lastSyncedAt`, `theme`, `schemaVersion`, `ntfySched` (seq → {at, topic, sig}), `firedLocal`, `mvdDay`, `harkPlugin`, `harkSnapshotDay`, dismissal flags.

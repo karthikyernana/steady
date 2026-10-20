@@ -45,4 +45,5 @@ class QuickParseTest {
         assertEquals("g1", p("post on linkedin at 6pm", at(9), goals).goalId); assertEquals("g2", p("gym session 45m", at(9), goals).goalId)
         assertEquals("g1", p("pitch a client in Jalandhar", at(9), goals).goalId); assertNull(p("buy milk", at(9), goals).goalId)
     }
+    @Test fun suggestedTimeChipParses() { val r = QuickParse.parse("call amma at 19:30"); assertEquals("19:30", r.dueTime); assertEquals("Call amma", r.title) }
 }

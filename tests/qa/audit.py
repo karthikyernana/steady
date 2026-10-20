@@ -5,6 +5,7 @@ AUD=open(__import__('os').path.join(__import__('os').path.dirname(__file__),'aud
 TAG=sys.argv[2] if len(sys.argv)>2 else 'cur'
 VPS={'m360':({'width':360,'height':780},2),'m412':({'width':412,'height':915},2),'w1366':({'width':1366,'height':768},1.25),'w1920':({'width':1536,'height':864},1.25)}
 report={}
+if os.environ.get('AUDIT_VP'): VPS={k:v for k,v in VPS.items() if k in os.environ['AUDIT_VP'].split(',')}
 with sync_playwright() as p:
     b=p.chromium.launch()
     for name,(vp,dsf) in VPS.items():

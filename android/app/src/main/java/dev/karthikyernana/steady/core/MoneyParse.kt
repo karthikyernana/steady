@@ -33,6 +33,39 @@ object MoneyParse {
     }
     fun payee(text: String): String? = PAYEES.firstOrNull { Regex("\\b${it.lowercase()}\\b").containsMatchIn(text.lowercase()) }
 
+    // ---- amounts said in words: English, Telugu script, romanized Telugu (findAmount in money.js) ----
+    private val EN = mapOf("one" to 1, "two" to 2, "three" to 3, "four" to 4, "five" to 5, "six" to 6, "seven" to 7, "eight" to 8, "nine" to 9, "ten" to 10, "eleven" to 11, "twelve" to 12,
+        "thirteen" to 13, "fourteen" to 14, "fifteen" to 15, "sixteen" to 16, "seventeen" to 17, "eighteen" to 18, "nineteen" to 19, "twenty" to 20, "thirty" to 30, "forty" to 40,
+        "fifty" to 50, "sixty" to 60, "seventy" to 70, "eighty" to 80, "ninety" to 90,
+        "ఒకటి" to 1, "ఒక" to 1, "రెండు" to 2, "మూడు" to 3, "నాలుగు" to 4, "ఐదు" to 5, "అయిదు" to 5, "ఆరు" to 6, "ఏడు" to 7, "ఎనిమిది" to 8, "తొమ్మిది" to 9, "పది" to 10,
+        "ఇరవై" to 20, "ముప్పై" to 30, "నలభై" to 40, "యాభై" to 50, "అరవై" to 60, "డెబ్బై" to 70, "ఎనభై" to 80, "తొంభై" to 90,
+        "okati" to 1, "oka" to 1, "rendu" to 2, "moodu" to 3, "mudu" to 3, "nalugu" to 4, "aidu" to 5, "ayidu" to 5, "aaru" to 6, "aru" to 6, "edu" to 7, "enimidi" to 8, "tommidi" to 9, "padi" to 10,
+        "iravai" to 20, "muppai" to 30, "nalabhai" to 40, "yabhai" to 50, "aravai" to 60, "debbai" to 70, "enabhai" to 80, "tombhai" to 90)
+    private val MULT = mapOf("hundred" to 100, "thousand" to 1000, "lakh" to 100000, "lakhs" to 100000, "lac" to 100000,
+        "వంద" to 100, "వందలు" to 100, "వందల" to 100, "నూరు" to 100, "వెయ్యి" to 1000, "వేలు" to 1000, "వేల" to 1000, "లక్ష" to 100000, "లక్షలు" to 100000, "లక్షల" to 100000,
+        "vanda" to 100, "vandalu" to 100, "vandala" to 100, "veyyi" to 1000, "velu" to 1000, "vela" to 1000, "laksha" to 100000, "lakshalu" to 100000)
+
+    /** "two thousand five hundred", "ఐదు వందలు", "rendu velu aidu vandalu" -> value and the words it used, or null. */
+    fun wordsAmount(text: String): Pair<Double, String>? {
+        val toks = text.split(Regex("\\s+")).filter { it.isNotEmpty() }
+        for (i in toks.indices) {
+            var total = 0L; var cur = 0L; var any = false; var k = i
+            while (k < toks.size) {
+                val t = toks[k].lowercase().trimEnd('.', ',', '!', '?')
+                when {
+                    t == "and" && any -> {}
+                    (t == "a" || t == "an") && MULT.containsKey(toks.getOrNull(k + 1)?.lowercase()) -> { cur += 1; any = true }
+                    EN[t] != null -> { cur += EN[t]!!; any = true }
+                    MULT[t] != null -> { val m = MULT[t]!!; if (!any && m >= 1000) break; cur = (if (cur == 0L) 1 else cur) * m; if (m >= 1000) { total += cur; cur = 0 }; any = true }
+                    else -> break
+                }
+                k++
+            }
+            if (any && total + cur > 0) return (total + cur).toDouble() to toks.subList(i, k).joinToString(" ")
+        }
+        return null
+    }
+
     fun parse(input: String, today: LocalDate = Dates.today()): MoneyDraft {
         val text = input.trim()
         var kind = if (INCOME_RE.containsMatchIn(text) && !ci("\\b(spent|paid|bought)\\b").containsMatchIn(text)) "income" else "expense"
@@ -50,6 +83,7 @@ object MoneyParse {
                 rest = rest.replaceRange(m.range, " ")
             }
         }
+        if (amount == null) wordsAmount(rest)?.let { (v, used) -> amount = v; rest = rest.replaceFirst(used, " ") }
         val p = payee(text)
         val cat = category(text, kind)
         var note = rest.replace(ci("\\b(spent|spend|paid|pay|bought|on|for|rs|inr|rupees?|got|received|credited|from|to|the|a|an|i|my|at|today|via|by|upi|cash)\\b|₹"), " ")

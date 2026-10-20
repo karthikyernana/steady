@@ -100,17 +100,29 @@ fun InsightsScreen() {
             }
         }
 
-        // 3. last 14 days: bars with an honest headline
-        item(key = "bars") {
-            val total = a.last14.sumOf { it.second }
-            val best = a.last14.maxByOrNull { it.second }?.takeIf { it.second > 0 }
-            SCard(Modifier.testTag("bars14")) {
-                Eyebrow("Finished · last 14 days")
+        // 3. when you get things done: by weekday and by hour (same charts as the web)
+        item(key = "weekday") {
+            val vals = a.wdRate.map { (it ?: 0.0).toFloat() }
+            val best = a.wdRate.withIndex().filter { it.value != null }.maxByOrNull { it.value!! }
+            SCard(Modifier.testTag("weekday")) {
+                Eyebrow("By weekday")
                 Spacer(Modifier.height(4.dp))
-                Text(if (total == 1) "1 task done" else "$total tasks done", style = Type.h3, color = P.ink)
-                Text(best?.let { "Best day: ${Dates.fmtDateKey(it.first)} (${it.second})" } ?: "Finish one thing and it shows up here.", style = Type.small, color = P.muted)
+                Text(best?.let { "${listOf("Mondays", "Tuesdays", "Wednesdays", "Thursdays", "Fridays", "Saturdays", "Sundays")[it.index]} are your best" } ?: "Needs a few weeks of planned tasks", style = Type.h3, color = P.ink)
+                Text("Planned tasks finished, last 8 weeks.", style = Type.small, color = P.muted)
                 Spacer(Modifier.height(12.dp))
-                Bars(a.last14.map { it.second.toFloat() }, a.last14.map { LocalDate.parse(it.first).dayOfWeek.getDisplayName(TextStyle.NARROW, Locale.ENGLISH) }, height = 96.dp)
+                Bars(vals, listOf("M", "T", "W", "T", "F", "S", "S"), height = 90.dp, highlightLast = false, highlight = best?.index ?: -1)
+            }
+        }
+        item(key = "hours") {
+            val h = a.hourHist; val peak = a.bestStart
+            SCard(Modifier.testTag("hours")) {
+                Eyebrow("By time of day")
+                Spacer(Modifier.height(4.dp))
+                Text(peak?.let { "Peak: ${Engine.fmtHour(it)} to ${Engine.fmtHour((it + 2) % 24)}" } ?: "Finish a few things to see your hours", style = Type.h3, color = P.ink)
+                Text("When you finish things, last 60 days.", style = Type.small, color = P.muted)
+                Spacer(Modifier.height(12.dp))
+                Bars(h.map { it.toFloat() }, (0 until 24).map { if (it % 6 == 0) Engine.fmtHour(it).replace(" ", "") else "" }, height = 80.dp, highlightLast = false,
+                    highlight = peak ?: -1, highlight2 = peak?.let { (it + 1) % 24 } ?: -1)
             }
         }
 
@@ -174,9 +186,6 @@ fun InsightsScreen() {
             }
         }
 
-        a.bestStart?.let { b ->
-            item(key = "hours") { SCard { Eyebrow("Your best hours"); Spacer(Modifier.height(4.dp)); Text("${Engine.fmtHour(b)} to ${Engine.fmtHour((b + 2) % 24)}", style = Type.h2, color = P.ink); Text("When you finish the most, from the last 60 days.", style = Type.small, color = P.muted) } }
-        }
     }
 }
 

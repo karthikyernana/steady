@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { analyzeData, mvdPicks, suggestTimeFrom, isCheckinTime, RULES } from '../../js/core/engine.js';
+import { analyzeData, mvdPicks, suggestTimeFrom, RULES } from '../../js/core/engine.js';
 import { dateKey, keyAdd } from '../../js/core/util.js';
 
 const NOW = new Date(2026, 9, 16, 12, 0);
@@ -58,11 +58,6 @@ test('suggests a reminder time from similar completed tasks', () => {
   const tasks = [task(1, { title: 'LinkedIn post', hour: 18 }), task(2, { title: 'linkedin carousel', hour: 18 }), task(3, { title: 'LinkedIn comments', hour: 19 })];
   const s = suggestTimeFrom('linkedin', tasks, analyzeData({ tasks }, NOW));
   assert.equal(s.time, '18:15'); assert.match(s.why, /usually/);
-});
-test('check-in window handles sleeping after midnight', () => {
-  assert.equal(isCheckinTime(new Date(2026, 9, 16, 17, 0), { sleep: '01:00' }), false);
-  assert.equal(isCheckinTime(new Date(2026, 9, 16, 21, 0), { sleep: '01:00' }), true);
-  assert.equal(isCheckinTime(new Date(2026, 9, 17, 0, 30), { sleep: '01:00' }), true);
 });
 
 import { todayLine } from '../../js/core/voice.js';

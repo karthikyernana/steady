@@ -83,12 +83,11 @@ private fun Main(activity: MainActivity, snackbar: SnackbarHostState) {
     var tab by rememberSaveable { mutableStateOf(Tab.Today) }
     var you by rememberSaveable { mutableStateOf(false) }
     var voice by remember { mutableStateOf(false) }
-    var checkin by remember { mutableStateOf(false) }
     var guide by remember { mutableStateOf(c.app.store.local("guideSeen") == null) }
 
     // notification taps
     LaunchedEffect(activity.openRequest) {
-        when (activity.openRequest) { "checkin" -> { you = false; tab = Tab.Today }; "today" -> { you = false; tab = Tab.Today } }
+        if (activity.openRequest != null) { you = false; tab = Tab.Today }
         activity.openRequest = null
     }
     // Android 13+: ask for notifications once, the first time the main screen shows
@@ -123,7 +122,7 @@ private fun Main(activity: MainActivity, snackbar: SnackbarHostState) {
                   Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) { Box(Modifier.widthIn(max = 640.dp).fillMaxSize()) {
                     when (r) {
                         "you" -> YouScreen(onClose = { you = false }, onGuide = { guide = true })
-                        Tab.Today.name -> TodayScreen(onCheckin = { checkin = true })
+                        Tab.Today.name -> TodayScreen()
                         Tab.Goals.name -> GoalsScreen()
                         Tab.Money.name -> MoneyScreen()
                         Tab.Thoughts.name -> ThoughtsScreen()
@@ -157,7 +156,6 @@ private fun Main(activity: MainActivity, snackbar: SnackbarHostState) {
         }
     }
     if (voice) VoiceSheet(onClose = { voice = false })
-    if (checkin) CheckinSheet(onClose = { checkin = false })
 }
 
 @Composable

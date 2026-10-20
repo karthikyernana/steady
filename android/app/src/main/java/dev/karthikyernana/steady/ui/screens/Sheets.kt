@@ -129,28 +129,3 @@ fun TaskSheet(t: Task, onClose: () -> Unit) {
     }
 }
 
-@Composable
-fun CheckinSheet(onClose: () -> Unit) {
-    val c = LocalCtx.current
-    val tk = Dates.todayKey()
-    val existing = c.snap.checkins.firstOrNull { it.date == tk }
-    var energy by remember { mutableStateOf((existing?.energy ?: 3).toString()) }
-    var win by remember { mutableStateOf(existing?.win ?: "") }
-    var care by remember { mutableStateOf(existing?.selfCare ?: "") }
-    SSheet(onClose, "How did today feel?") {
-        Text("Energy", style = Type.label, color = P.muted)
-        Spacer(Modifier.height(6.dp))
-        Segmented((1..5).map { "$it" to listOf("Drained", "Low", "Okay", "Good", "Great")[it - 1] }, energy, { energy = it }, Modifier.fillMaxWidth())
-        Spacer(Modifier.height(12.dp))
-        SField(win, { win = it }, "One win, however small", singleLine = false, testTag = "ci-win")
-        Spacer(Modifier.height(8.dp))
-        SField(care, { care = it }, "Something you did for yourself", singleLine = false)
-        Spacer(Modifier.height(16.dp))
-        PrimaryButton("Save check-in", Modifier.fillMaxWidth()) {
-            val base = existing?.raw ?: buildJsonObject { put("id", uid()) }
-            c.app.store.save("checkins", base.with("date" to tk, "energy" to energy.toInt(), "win" to win.trim(), "selfCare" to care.trim()))
-            onClose(); c.toast("Saved. Sleep well.", null)
-        }
-    }
-}
-

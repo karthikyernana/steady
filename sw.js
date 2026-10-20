@@ -1,5 +1,5 @@
 // Steady service worker: offline app shell (network-first, cache fallback) + Web Push + notification clicks.
-const VERSION = 'steady-v1.4.0';
+const VERSION = 'steady-v1.4.0-r1';
 const SHELL = [
   './',
   './index.html',
@@ -11,7 +11,9 @@ const SHELL = [
   './js/core/engine.js',
   './js/core/merge.js',
   './js/core/money.js',
+  './js/core/overview.js',
   './js/core/parse.js',
+  './js/core/readable.js',
   './js/core/schema.js',
   './js/core/text.js',
   './js/core/util.js',
@@ -23,6 +25,8 @@ const SHELL = [
   './js/data/sync.js',
   './js/platform/notify.js',
   './js/ui/charts.js',
+  './js/ui/daystrip.js',
+  './js/ui/guide.js',
   './js/ui/icons.js',
   './js/ui/motion.js',
   './js/ui/ui.js',
@@ -112,5 +116,5 @@ self.addEventListener('notificationclick', e => {
     return;
   }
   const target = new URL(data.url || './', self.registration.scope).href;
-  e.waitUntil(openApp(n.tag === 'checkin' ? './?checkin=1' : target, n.tag === 'checkin' ? { type: 'open-checkin' } : null));
+  e.waitUntil(openApp(target, null));
 });

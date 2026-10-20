@@ -7,7 +7,7 @@ import { permission, requestPermission, showLocal, ntfyPublish, reconcileNtfy, r
 import { downloadExport, importJSON } from '../../data/backup.js';
 import { agentMemory, resetAgentMemory } from '../../data/agent.js';
 
-export const APP_VERSION = '1.3.1';
+export const APP_VERSION = '1.4.0';
 let cfg = local('serverConfig') || null;
 serverConfig().then(c => { const changed = JSON.stringify(c) !== JSON.stringify(cfg); cfg = c; if (changed) requestRender(); }).catch(() => {});
 
@@ -49,6 +49,8 @@ export function renderSettings() {
 
   return `<div class="page-head"><div><div class="eyebrow">You</div><h1 class="display">Settings, <em>kept simple</em>.</h1></div></div>
 
+  <button class="btn ghost guide-open" data-act="guide" data-testid="guide-open">${I.spark}<span>How Steady works</span></button>
+
   <section class="card set" id="sec-profile"><h2 class="card-title">${I.you}<span>About you</span></h2>
     <form class="form" id="pf">
       <label class="field"><span>Name</span><input name="name" value="${esc(p.name || '')}" autocomplete="given-name"></label>
@@ -65,9 +67,8 @@ export function renderSettings() {
       ${perm === 'granted' && acct && pushSupported() && !pushOn && cfg?.vapidPublicKey ? '<button class="btn primary sm" data-act="push-on" data-testid="push-on">Also when closed</button>' : ''}
       ${perm === 'granted' ? `<button class="btn ghost sm" data-act="notif-test" data-testid="notif-test">${acct && pushOn ? 'Test with app closed' : 'Test'}</button>` : ''}</span></div>
     ${acct && pushOn ? '<p class="hint small" id="rem-health" data-testid="rem-health">Checking delivery…</p>' : ''}
-    <div class="grid2 mt stack-sm">
+    <div class="mt">
       <label class="field"><span>Remind me</span><select id="lead">${[[0, 'At the time'], [5, '5 min before'], [10, '10 min before'], [15, '15 min before'], [30, '30 min before']].map(([v, l]) => `<option value="${v}" ${+(s.reminderLead ?? 0) === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
-      <div class="field"><span>Evening check-in nudge</span>${toggle('ci-nudge', s.checkinNudge !== false, 'About 90 min before sleep')}</div>
     </div>
     ${toggle('def-rem', s.defaultReminder !== false, 'Tasks with a time get a reminder by default')}
     <details class="steps mt" data-testid="ntfy-section" ${s.ntfyEnabled ? 'open' : ''}><summary>Backup channel: ntfy (optional)</summary>
@@ -123,7 +124,6 @@ export function mountSettings(root) {
     reconcileNtfy(); toast('Saved.');
   });
   root.querySelector('#lead')?.addEventListener('change', async e => { await setMeta('settings', { reminderLead: +e.target.value }); reconcileNtfy(); });
-  root.querySelector('#ci-nudge')?.addEventListener('change', async e => { await setMeta('settings', { checkinNudge: e.target.checked }); reconcileNtfy(); });
   root.querySelector('#def-rem')?.addEventListener('change', e => setMeta('settings', { defaultReminder: e.target.checked }));
   root.querySelector('#ntfy-on')?.addEventListener('change', async e => {
     const s = meta('settings');

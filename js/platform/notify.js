@@ -3,6 +3,8 @@
 //  2. Web Push from Steady's server (cron drains a reminder queue) when signed in; works with the app closed.
 //  3. Optional fallback: ntfy.sh scheduled delivery ("At: <unix ts>") so the phone buzzes even when the app is closed. No server of ours.
 //     Each reminder uses a stable sequence id (st-<taskId>) so rescheduling replaces it and finishing a task cancels it.
+// The evening check-in nudge is retired (v1.4): it is no longer wanted, so reconcile deletes any queued st-checkin-* rows
+// from the server queue and ntfy on the next pass.
 import { all, local, setLocal, meta } from '../data/store.js';
 import { todayKey, keyAdd, fromKey, toMin, fmtTime } from '../core/util.js';
 import { api, cloudReady, serverConfig, deviceName } from '../data/sync.js';
@@ -57,11 +59,6 @@ export function startLocalScheduler(onInApp) {
       if (document.visibilityState === 'visible') onInApp?.(t);
       await showLocal(t.title, body, `task-${t.id}`, taskNoteExtra(t)).catch(() => {});
     }
-    const ci = checkinFireAt(todayKey());
-    if (ci && ci <= now && ci > now - 10 * 60e3 && !fired[`checkin@${ci}`] && !all('checkins').some(c => c.date === todayKey())) {
-      fired[`checkin@${ci}`] = now; changed = true;
-      if (document.visibilityState !== 'visible') await showLocal('Evening check-in', 'Two minutes: energy, one win, and something you did for yourself.', 'checkin');
-    }
     if (changed) {
       for (const k of Object.keys(fired)) if (fired[k] < now - 2 * 864e5) delete fired[k];
       await setLocal('firedLocal', fired);
@@ -74,7 +71,6 @@ export function startLocalScheduler(onInApp) {
     clearTimeout(next);
     const now = Date.now();
     const ats = all('tasks').map(fireAt).filter(at => at && at > now);
-    const ci = checkinFireAt(todayKey()); if (ci && ci > now) ats.push(ci);
     const at = Math.min(...ats);
     if (Number.isFinite(at) && at - now < 6 * 3600e3) next = setTimeout(() => { tick().then(arm); }, at - now + 50);
   };
@@ -84,16 +80,6 @@ export function startLocalScheduler(onInApp) {
   armLocal = arm;
 }
 export const rearmLocal = () => armLocal();
-
-export function checkinFireAt(dayKey) {
-  const s = meta('settings');
-  if (s.checkinNudge === false) return null;
-  const p = meta('profile');
-  let sleep = toMin(p.sleep || '23:30');
-  if (sleep < 6 * 60) sleep += 1440; // sleeping after midnight
-  const m = Math.max(sleep - 90, 19 * 60);
-  return fromKey(dayKey).getTime() + m * 60e3;
-}
 
 export const taskNoteExtra = t => ({ data: { key: `st-${t.id}`, taskId: t.id }, sticky: t.priority === 3,
   actions: [{ action: 'done', title: 'Done' }, { action: 'snooze', title: 'Snooze 10 min' }] });
@@ -129,12 +115,6 @@ export function wantedReminders(horizon, pastMs = 0) {
     if (!at || at < lo || at > now + horizon) continue;
     const body = [t.durationMin ? `${t.durationMin} min` : null, `due ${fmtTime(t.dueTime)}`].filter(Boolean).join(' · ');
     want[`st-${t.id}`] = { at, title: t.title, body, tags: t.priority === 3 ? 'alarm_clock,warning' : 'alarm_clock', tag: `task-${t.id}`, url: '/#/today' };
-  }
-  for (let i = 0; i <= Math.ceil(horizon / 864e5); i++) {
-    const k = keyAdd(todayKey(), i);
-    const at = checkinFireAt(k);
-    if (at && at > lo && at < now + horizon && !all('checkins').some(c => c.date === k))
-      want[`st-checkin-${k.replace(/-/g, '')}`] = { at, title: 'Evening check-in', body: 'Energy, one win, and one thing you did for yourself. Two minutes.', tags: 'crescent_moon', tag: 'checkin', url: '/?checkin=1#/today' };
   }
   return want;
 }

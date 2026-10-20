@@ -55,7 +55,7 @@ TickTick/Due exactly is a thin native shell (TWA or Capacitor) that adds on-devi
 ## Before v1.3.1 (kept for reference)
 
 
-## Today (v1.2) — three paths, all keyed by a stable id per reminder (`st-<taskId>`, `st-checkin-YYYYMMDD`)
+## Today (v1.2) — three paths, all keyed by a stable id per reminder (`st-<taskId>`; the old `st-checkin-YYYYMMDD` evening nudge is retired in v1.4 and the server drops any still queued)
 
 | Path | When it works | Precision | Notes |
 | --- | --- | --- | --- |

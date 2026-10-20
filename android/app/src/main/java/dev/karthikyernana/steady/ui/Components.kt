@@ -210,21 +210,24 @@ fun Ring(progress: Float, label: String, size: Dp = 56.dp) {
 
 /** Simple bar chart with day labels under each bar. */
 @Composable
-fun Bars(values: List<Float>, labels: List<String>, modifier: Modifier = Modifier, height: Dp = 110.dp, highlightLast: Boolean = true, color: Color = P.accent) {
+fun Bars(values: List<Float>, labels: List<String>, modifier: Modifier = Modifier, height: Dp = 110.dp, highlightLast: Boolean = true, color: Color = P.accent, highlight: Int = -1, highlight2: Int = -1) {
     val max = (values.maxOrNull() ?: 0f).coerceAtLeast(1f)
     val empty = P.line; val muted = P.muted; val ink = P.ink
     val grow = remember { androidx.compose.animation.core.Animatable(0f) }
     LaunchedEffect(Unit) { grow.animateTo(1f, spring(dampingRatio = 0.8f, stiffness = 140f)) }
     Column(modifier) {
         Canvas(Modifier.fillMaxWidth().height(height)) {
-            val n = values.size.coerceAtLeast(1); val gap = 6.dp.toPx(); val bw = (size.width - gap * (n - 1)) / n
+            val n = values.size.coerceAtLeast(1); val gap = (if (n > 12) 2 else 6).dp.toPx(); val bw = (size.width - gap * (n - 1)) / n
             values.forEachIndexed { i, v ->
                 val h = if (v <= 0f) 2.dp.toPx() else ((v / max) * (size.height - 4.dp.toPx()) * grow.value).coerceAtLeast(2.dp.toPx())
-                drawRoundRect(if (v <= 0f) empty else color, Offset(i * (bw + gap), size.height - h), Size(bw, h), CornerRadius(4.dp.toPx()))
+                val dim = (highlight >= 0 && i != highlight && i != highlight2)
+                drawRoundRect(if (v <= 0f) empty else if (dim) color.copy(alpha = 0.45f) else color, Offset(i * (bw + gap), size.height - h), Size(bw, h), CornerRadius(minOf(4.dp.toPx(), bw / 3)))
             }
         }
         Row(Modifier.fillMaxWidth().padding(top = 4.dp)) {
-            labels.forEachIndexed { i, l -> Text(l, style = Type.label, color = if (highlightLast && i == labels.lastIndex) ink else muted, textAlign = TextAlign.Center, modifier = Modifier.weight(1f)) }
+            // many bars: sparse labels that may overflow their narrow column (never wrap)
+            if (labels.size > 12) labels.forEachIndexed { i, l -> Box(Modifier.weight(1f)) { if (l.isNotEmpty()) Text(l, style = Type.label.copy(fontSize = 10.sp), color = if (i == highlight) ink else muted, maxLines = 1, softWrap = false, modifier = Modifier.wrapContentWidth(Alignment.Start, unbounded = true)) } }
+            else labels.forEachIndexed { i, l -> Text(l, style = Type.label, color = if ((highlightLast && i == labels.lastIndex) || i == highlight) ink else muted, textAlign = TextAlign.Center, modifier = Modifier.weight(1f)) }
         }
     }
 }

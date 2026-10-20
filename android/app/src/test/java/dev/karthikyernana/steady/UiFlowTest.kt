@@ -59,11 +59,14 @@ class UiFlowTest {
         rule.onNodeWithTag("tab-goals").performClick()
         rule.onNodeWithText("Add a goal").performClick()
         rule.onNodeWithTag("goal-title").performTextInput("Land first client")
-        rule.onNodeWithText("Weekly milestones, one per line").performTextInput("Portfolio\nOutreach list\nFirst pitch")
+        for (m in listOf("Portfolio", "Outreach list")) { rule.onNodeWithTag("ms-new").performTextInput(m); rule.onNodeWithTag("ms-add").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick) }
+        rule.onNodeWithTag("ms-new").performTextInput("First pitch")   // typed but not added: Save keeps it
+        assertEquals(2, rule.onAllNodesWithTag("ms-row").fetchSemanticsNodes().size)
         rule.onNodeWithText("Save").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick)
         rule.waitForIdle()
         val g = app.store.snapshot.value.goals.single()
         assertEquals(3, g.milestones.size)
+        assertEquals(3, g.milestones.mapNotNull { it.week }.toSet().size)     // one per week
         rule.onNodeWithText("0 of 3 milestones").assertExists()
 
         // Money

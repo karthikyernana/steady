@@ -12,7 +12,7 @@ def onboard(pg, name='Karthik'):
     pg.fill('[data-testid=ob-name]', name); pg.click('form[data-ob=name] button[type=submit]'); pg.wait_for_selector('[data-testid=ob-goal-0]')
     pg.fill('[data-testid=ob-goal-0]', 'Land my first paying client'); pg.click('form[data-ob=goals] button[type=submit]'); pg.wait_for_selector('[data-testid=ob-wake]')
     pg.click('form[data-ob=rhythm] button[type=submit]'); pg.wait_for_selector('[data-ob-skip]'); pg.click('[data-ob-skip]')
-    pg.wait_for_selector('[data-testid=ob-finish]'); pg.click('[data-testid=ob-finish]'); pg.wait_for_selector('#qa')
+    pg.wait_for_selector('[data-testid=ob-finish]'); pg.click('[data-testid=ob-finish]'); pg.wait_for_selector('[data-testid=guide-skip]'); pg.click('[data-testid=guide-skip]'); pg.wait_for_selector('.guide', state='detached'); pg.wait_for_selector('#qa')
 def open_signin(pg):
     pg.evaluate("location.hash='#/you'"); pg.wait_for_selector('[data-testid=sign-in]'); pg.click('[data-testid=sign-in]'); pg.wait_for_selector('[data-testid=si-email]')
 with sync_playwright() as p:

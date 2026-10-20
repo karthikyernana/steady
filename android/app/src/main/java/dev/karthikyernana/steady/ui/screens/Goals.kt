@@ -7,6 +7,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.MoreHoriz
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -117,7 +118,14 @@ fun GoalSheet(g: Goal?, onClose: () -> Unit) {
     var title by remember { mutableStateOf(g?.title ?: "") }
     var why by remember { mutableStateOf(g?.why ?: "") }
     var target by remember { mutableStateOf(g?.target ?: Dates.today().plusDays(84).toString()) }
-    var milestones by remember { mutableStateOf(g?.milestones?.joinToString("\n") { it.title } ?: "") }
+    // one editable row per milestone (title, week, done), like the web's editor
+    val oldRaw = remember { g?.raw?.arr("milestones")?.mapNotNull { it as? JsonObject }.orEmpty() }
+    val rows = remember { androidx.compose.runtime.mutableStateListOf<JsonObject>().apply { addAll(oldRaw) } }
+    var msNew by remember { mutableStateOf("") }
+    val weeks = remember(target) { val ws = Dates.weekStart(); val end = runCatching { java.time.LocalDate.parse(target) }.getOrNull() ?: ws.plusWeeks(12)
+        generateSequence(ws) { it.plusWeeks(1) }.takeWhile { !it.isAfter(end) || it == ws }.take(52).map { it.toString() }.toList() }
+    fun nextWeek(): String { val used = rows.mapNotNull { it.str("week") }.toSet(); return weeks.firstOrNull { it !in used } ?: weeks.last() }
+    fun addMs() { val t = msNew.trim(); if (t.isEmpty()) return; rows.add(buildJsonObject { put("id", uid()); put("title", t); put("week", nextWeek()); put("done", false) }); msNew = "" }
     var actions by remember { mutableStateOf(g?.actions?.joinToString("\n") ?: "") }
     SSheet(onClose, if (g == null) "New goal" else "Edit goal") {
         SField(title, { title = it }, "Goal", testTag = "goal-title")
@@ -125,17 +133,35 @@ fun GoalSheet(g: Goal?, onClose: () -> Unit) {
         SField(why, { why = it }, "Why it matters (optional)", singleLine = false)
         DateField("Target date", target, { if (it != null) target = it })
         Spacer(Modifier.height(8.dp))
-        SField(milestones, { milestones = it }, "Weekly milestones, one per line", singleLine = false, minLines = 3)
+        Eyebrow("Weekly milestones")
+        Spacer(Modifier.height(4.dp))
+        rows.forEachIndexed { i, m ->
+            var weekMenu by remember(m.str("id")) { mutableStateOf(false) }
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().testTag("ms-row")) {
+                CheckDot(done = m.bool("done") == true) { rows[i] = m.with("done" to (m.bool("done") != true), "doneAt" to if (m.bool("done") != true) System.currentTimeMillis() else null) }
+                androidx.compose.foundation.text.BasicTextField(m.str("title").orEmpty(), { v -> rows[i] = m.with("title" to v) }, textStyle = Type.body.copy(fontSize = 15.sp, color = P.ink), singleLine = true,
+                    cursorBrush = androidx.compose.ui.graphics.SolidColor(P.accent), modifier = Modifier.weight(1f).padding(vertical = 10.dp))
+                Box {
+                    Text(weekLabel(m.str("week")).removePrefix("Week of ").ifBlank { "Week" }, style = Type.label.copy(fontSize = 12.sp), color = P.accent,
+                        modifier = Modifier.clip(RoundedCornerShape(999.dp)).background(P.accentSoft).clickable { weekMenu = true }.padding(horizontal = 10.dp, vertical = 6.dp))
+                    DropdownMenu(weekMenu, { weekMenu = false }, containerColor = P.surface) {
+                        weeks.forEach { w -> DropdownMenuItem(text = { Text(weekLabel(w), style = Type.small, color = P.ink) }, onClick = { rows[i] = m.with("week" to w); weekMenu = false }) }
+                    }
+                }
+                IconButton(onClick = { rows.removeAt(i) }, modifier = Modifier.size(40.dp)) { Icon(androidx.compose.material.icons.Icons.Rounded.Close, "Remove milestone", tint = P.muted, modifier = Modifier.size(18.dp)) }
+            }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            SField(msNew, { msNew = it }, "Add a milestone, e.g. ship portfolio v1", Modifier.weight(1f), testTag = "ms-new", ime = androidx.compose.ui.text.input.ImeAction.Done, onIme = { addMs() })
+            Spacer(Modifier.width(8.dp))
+            GhostButton("Add", Modifier.testTag("ms-add")) { addMs() }
+        }
         Spacer(Modifier.height(8.dp))
         SField(actions, { actions = it }, "Daily actions, one per line (optional)", singleLine = false, minLines = 2)
         Spacer(Modifier.height(16.dp))
         PrimaryButton("Save", Modifier.fillMaxWidth(), enabled = title.isNotBlank()) {
-            val ws = Dates.weekStart().toString()
-            val old = g?.milestones.orEmpty(); val oldRaw = g?.raw?.arr("milestones")?.mapNotNull { it as? JsonObject }.orEmpty()
-            val ms = milestones.lines().map { it.trim() }.filter { it.isNotEmpty() }.mapIndexed { i, t ->
-                val keep = old.indexOfFirst { it.title == t }
-                if (keep >= 0) oldRaw[keep] else buildJsonObject { put("id", uid()); put("title", t); put("week", Dates.keyAdd(ws, i * 7L)); put("done", false) }
-            }
+            addMs()   // a typed-but-not-added milestone still counts
+            val ms = rows.filter { !it.str("title").isNullOrBlank() }.map { it.with("title" to it.str("title")!!.trim()) }.sortedBy { it.str("week") ?: "" }
             val oldActs = g?.raw?.arr("actions")?.mapNotNull { it as? JsonObject }.orEmpty()
             val acts = actions.lines().map { it.trim() }.filter { it.isNotEmpty() }.map { t -> oldActs.firstOrNull { it.str("title") == t } ?: buildJsonObject { put("id", uid()); put("title", t) } }
             val base = g?.raw ?: buildJsonObject { put("id", uid()); put("order", c.snap.goals.size) }

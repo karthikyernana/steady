@@ -42,12 +42,6 @@ object Reminders {
         return runCatching { Dates.epochAt(t.dueDate!!, min - lead) }.getOrNull()
     }
 
-    @Suppress("UNUSED_PARAMETER")
-    fun checkinAt(s: Snapshot, dayKey: String): Long? {
-        // the evening check-in was retired in 1.3 (he found it not useful); no nudge is scheduled any more
-        return null
-    }
-
     fun wanted(s: Snapshot, now: Long = System.currentTimeMillis()): List<Want> {
         val lead = s.settings.int("reminderLead") ?: 0
         val out = mutableListOf<Want>()
@@ -56,13 +50,6 @@ object Reminders {
             if (at <= now || at > now + HORIZON_MS) continue
             val body = listOfNotNull(t.durationMin?.let { "$it min" }, "due ${Dates.fmtTime(t.dueTime)}").joinToString(" · ")
             out += Want("st-${t.id}", at, t.title, body, t.id, t.priority == 3)
-        }
-        val today = Dates.todayKey()
-        for (i in 0..14) {
-            val k = Dates.keyAdd(today, i.toLong())
-            val at = checkinAt(s, k) ?: continue
-            if (at > now && at < now + HORIZON_MS && s.checkins.none { it.date == k })
-                out += Want("st-checkin-${k.replace("-", "")}", at, "Evening check-in", "Energy, one win, and one thing you did for yourself. Two minutes.", null, false)
         }
         return out.sortedBy { it.at }.take(MAX)
     }
@@ -102,7 +89,7 @@ object Reminders {
         val nm = ctx.getSystemService(NotificationManager::class.java)
         if (nm.getNotificationChannel(CHANNEL) == null)
             nm.createNotificationChannel(NotificationChannel(CHANNEL, "Reminders", NotificationManager.IMPORTANCE_HIGH).apply {
-                description = "Task reminders and the evening check-in"; enableVibration(true); enableLights(true)
+                description = "Task reminders"; enableVibration(true); enableLights(true)
             })
     }
 
@@ -113,7 +100,7 @@ object Reminders {
         ensureChannel(ctx)
         val id = idFor(key)
         val open = PendingIntent.getActivity(ctx, id, Intent(ctx, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-            .putExtra("open", if (taskId == null) "checkin" else "today"), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            .putExtra("open", "today"), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val b = NotificationCompat.Builder(ctx, CHANNEL).setSmallIcon(R.drawable.ic_stat_steady).setContentTitle(title).setContentText(body)
             .setColor(0xFF3D6B52.toInt()).setPriority(NotificationCompat.PRIORITY_HIGH).setCategory(NotificationCompat.CATEGORY_REMINDER)
             .setAutoCancel(true).setContentIntent(open)
@@ -130,6 +117,7 @@ object Reminders {
 class ReminderReceiver : BroadcastReceiver() {
     override fun onReceive(ctx: Context, i: Intent) {
         val key = i.getStringExtra("key") ?: return
+        if (key.startsWith("st-checkin")) return          // retired in 1.3: an alarm armed by an older build stays silent
         val store = SteadyApp.store(ctx)
         val taskId = i.getStringExtra("taskId")
         // the task may have been finished or moved since the alarm was set: check the current record before buzzing

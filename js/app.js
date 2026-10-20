@@ -2,7 +2,8 @@ import { load, onChange, meta, local, setLocal, all, get, save } from './data/st
 import { I } from './ui/icons.js';
 import { esc, debounce, ago, dateKey, pad } from './core/util.js';
 import { actions, setRerender, requestRender, toast, sheetOpen } from './ui/ui.js';
-import { renderToday, mountToday, openCheckin } from './ui/views/today.js';
+import { renderToday, mountToday } from './ui/views/today.js';
+import { openGuide, guideSeen } from './ui/guide.js';
 import { renderGoals } from './ui/views/goals.js';
 import { renderThoughts, mountThoughts } from './ui/views/thoughts.js';
 import { renderMoney, mountMoney } from './ui/views/money.js';
@@ -81,6 +82,7 @@ function paintSync() {
   if (a) a.innerHTML = syncChip(st, false);
   if (b) b.innerHTML = syncChip(st, true);
 }
+actions.guide = () => openGuide();
 actions['sync-chip'] = async () => {
   const ok = await syncNow('manual');
   if (!ok && getStatus().error) toast(getStatus().error);
@@ -95,7 +97,12 @@ function render() {
       app.innerHTML = renderOnboarding();
       if (boot) motion.shellIn(boot, br);
       motion.stagger(app.querySelector('.ob-inner')?.children || [], 0, { base: 120, step: 70 });
-      mountOnboarding(app, () => { shell(); render(); motion.shellIn(); toast(`Welcome, ${meta('profile').name || 'friend'}.`); setTimeout(() => document.getElementById('qa')?.focus(), 200); });
+      mountOnboarding(app, () => {
+        shell(); render(); motion.shellIn();
+        const welcome = () => { toast(`Welcome, ${meta('profile').name || 'friend'}.`); setTimeout(() => document.getElementById('qa')?.focus(), 200); };
+        // first run: a short visual tour of how Steady works (also in You → How Steady works)
+        if (!guideSeen()) openGuide({ onDone: welcome }); else welcome();
+      });
     }
     return;
   }
@@ -255,8 +262,7 @@ async function boot() {
     let reloaded = false;
     navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController && !reloaded) { reloaded = true; location.reload(); } });
     navigator.serviceWorker.addEventListener('message', e => {
-      if (e.data?.type === 'open-checkin') openCheckin();
-      else if (e.data?.type === 'task-done' || e.data?.type === 'task-snooze') taskAction(e.data.type, e.data.id);
+      if (e.data?.type === 'task-done' || e.data?.type === 'task-snooze') taskAction(e.data.type, e.data.id);
     });
   }
   await load();
@@ -266,7 +272,6 @@ async function boot() {
   if (cloudReady()) { syncNow('open'); checkSession(); if (permission() === 'granted') enablePush().catch(() => {}); }
   reconcileNtfy();
   startLocalScheduler(t => toast(`Now: ${t.title}`, { ms: 10000, undo: null }));
-  if (location.search.includes('checkin')) openCheckin();
   const q = new URLSearchParams(location.search);
   if (q.get('done') || q.get('snooze')) { await taskAction(q.get('done') ? 'task-done' : 'task-snooze', q.get('done') || q.get('snooze')); history.replaceState(null, '', location.pathname + location.hash); }
   document.documentElement.classList.add('ready');

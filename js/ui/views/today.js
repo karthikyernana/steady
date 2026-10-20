@@ -1,7 +1,8 @@
 import { all, get, save, remove, uid, meta, setMeta, local, setLocal } from '../../data/store.js';
 import { todayKey, keyAdd, fmtTime, fmtDateKey, esc, greeting, DAYS, MONTHS, toMin } from '../../core/util.js';
 import { parseQuick } from '../../core/parse.js';
-import { analyze, suggestTime, mvdPicks, tinyFromGoals, isCheckinTime } from '../../data/insights.js';
+import { analyze, suggestTime, mvdPicks, tinyFromGoals } from '../../data/insights.js';
+import { renderDayStrip } from '../daystrip.js';
 import { ring } from '../charts.js';
 import { todayLine } from '../../core/voice.js';
 import { I } from '../icons.js';
@@ -78,6 +79,9 @@ export function renderToday() {
     <div class="chips" id="qa-chips" aria-live="polite"></div>
   </form>`;
 
+  // the day at a glance: next timed thing + the waking day as a line (only when something today has a time)
+  html += renderDayStrip(todays, { wake: p.wake || '07:00', sleep: p.sleep || '23:30' });
+
   // carry-over prompt
   const slumpCard = a.slump && !mvdOn && local('mvdDismissed') !== tk && (open.length || !todays.length);
   if (carry.length && !slumpCard) {
@@ -120,14 +124,6 @@ export function renderToday() {
         <p class="muted">Want to move the ${open.length - a.loadCap} lowest-priority ${open.length - a.loadCap === 1 ? 'one' : 'ones'} to tomorrow?</p>
         <div class="row gap wrap"><button class="btn primary sm" data-act="lighten">Lighten today</button><button class="btn ghost sm" data-act="load-dismiss">Keep it</button></div>
       </div></section>`;
-  }
-
-  // check-in
-  const ci = all('checkins').find(c => c.date === tk);
-  if (isCheckinTime() && !ci) {
-    html += `<section class="card checkin-cta" data-testid="checkin-cta">
-      <div><div class="eyebrow">Evening check-in</div><h2 class="serif">How did today feel?</h2><p class="muted">Energy, one win, one kind thing. A minute.</p></div>
-      <button class="btn primary" data-act="checkin">Check in</button></section>`;
   }
 
   // install banner
@@ -185,7 +181,19 @@ function taskRow(t, showDate = false) {
 }
 
 // ---------------- composer ----------------
+let stripTimer = null;
 export function mountToday(root) {
+  // the strip's countdown and "now" marker move every 30 s without re-rendering the page
+  clearInterval(stripTimer);
+  stripTimer = setInterval(() => {
+    const el = document.getElementById('daystrip');
+    if (!el) { if (!document.querySelector('.v-today')) clearInterval(stripTimer); return; }
+    const p = profile();
+    const html = renderDayStrip(all('tasks').filter(t => t.dueDate === todayKey()), { wake: p.wake || '07:00', sleep: p.sleep || '23:30' });
+    if (!html) { el.remove(); return; }
+    const tmp = document.createElement('div'); tmp.innerHTML = html;
+    if (tmp.firstElementChild.innerHTML !== el.innerHTML) el.replaceWith(tmp.firstElementChild);
+  }, 30e3);
   const input = root.querySelector('#qa');
   const chips = root.querySelector('#qa-chips');
   if (!input) return;
@@ -324,30 +332,6 @@ export function editTask(id, preset = {}) {
       b.querySelector('[data-del]')?.addEventListener('click', async () => {
         const prev = await remove('tasks', t.id); reconcileNtfy(); api.close();
         toast('Deleted.', { undo: () => save('tasks', prev) });
-      });
-    },
-  });
-}
-
-// ---------------- check-in ----------------
-on('checkin', () => openCheckin());
-export function openCheckin(dateK = todayKey()) {
-  const ex = all('checkins').find(c => c.date === dateK) || {};
-  openSheet({
-    title: 'Evening check-in',
-    body: `<form class="form" id="cf">
-      <div class="field"><span>Energy today</span>${segmented('energy', [[1, '1'], [2, '2'], [3, '3'], [4, '4'], [5, '5']], ex.energy || 3)}<small class="hint row between"><span>Drained</span><span>Full</span></small></div>
-      <label class="field"><span>One win, however small</span><input name="win" value="${esc(ex.win || '')}" placeholder="Shipped the landing page draft" autofocus></label>
-      <label class="field"><span>What did you do for yourself?</span><input name="selfCare" value="${esc(ex.selfCare || '')}" placeholder="Walk, gym, a call home, early night…"></label>
-      <div class="row end"><button class="btn primary" type="submit">Save check-in</button></div></form>`,
-    onMount: (b, api) => {
-      bindSeg(b, 'energy', () => {});
-      b.querySelector('#cf').addEventListener('submit', async e => {
-        e.preventDefault();
-        const f = e.target;
-        await save('checkins', { id: `ci-${dateK}`, date: dateK, energy: +segValue(b, 'energy') || 3, win: f.win.value.trim(), selfCare: f.selfCare.value.trim() });
-        reconcileNtfy(); api.close();
-        toast('Logged. Sleep well.');
       });
     },
   });

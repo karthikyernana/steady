@@ -15,6 +15,8 @@ data class Analysis(
     val bestDay: Pair<Int, Double>? = null, val worstDay: Pair<Int, Double>? = null,
     /** Why today should be small (away 2+ days, or 2 of the last 3 days under a third done), or null. */
     val slump: String? = null,
+    /** Share of planned tasks finished per weekday, Monday first, last 8 weeks (null = not enough planned). */
+    val wdRate: List<Double?> = List(7) { null },
 )
 
 object Engine {
@@ -58,6 +60,7 @@ object Engine {
         return Analysis(today, cur, longest, bestStart, doneOn, hourHist, last14, avg, away,
             bestShare = if (total > 0) bestCount.toDouble() / total else 0.0, enough = done.size >= MIN_DATA, loadCap = maxOf(3, Math.round(avg * 1.25).toInt() + 1),
             checkins14 = ci14, rate30 = if (p30 > 0) d30.toDouble() / p30 else null, bestDay = bestDay, worstDay = worstDay,
+            wdRate = (1..7).map { i -> val wd = i % 7; if (wdP[wd] >= 2) wdD[wd].toDouble() / wdP[wd] else null },
             slump = when {
                 away != null && away >= 2 -> "It's been $away days. No catching up needed."
                 (1..3).count { i -> planned[Dates.keyAdd(today, -i.toLong())]?.let { it[0] > 0 && it[1].toDouble() / it[0] < 0.34 } == true } >= 2 -> "The last few days were heavy."
@@ -106,6 +109,17 @@ object Engine {
         return if (h < 12) "$open on the list. Start with the smallest; momentum does the rest." else "$open still open. Pick one and finish it."
     }
 
+    /** A time for a new task: when similar past tasks got done (3+), else his best hours (suggestTimeFrom in engine.js). */
+    fun suggestTime(title: String, s: Snapshot, a: Analysis): Pair<String, String>? {
+        val words = title.lowercase().split(Regex("[^a-z0-9]+")).filter { it.length >= 4 }
+        if (words.isNotEmpty()) {
+            val mins = s.tasks.filter { it.isDone && it.doneAt != null && words.any { w -> it.title.lowercase().contains(w) } }
+                .map { val d = java.time.Instant.ofEpochMilli(it.doneAt!!).atZone(Dates.zone); d.hour * 60 + d.minute }.sorted()
+            if (mins.size >= 3) { val m = Math.round(mins[mins.size / 2] / 15.0).toInt() * 15 % 1440; return "%02d:%02d".format(m / 60, m % 60) to "when you usually do this" }
+        }
+        return a.bestStart?.let { "%02d:30".format(it) to "your best hours" }
+    }
+
     /** Minimum viable day: up to 3 tiny things (≤30 min) instead of the whole list (mvdPicks in engine.js). */
     fun mvdPicks(open: List<Task>): List<Task> {
         val sorted = open.sortedWith(compareBy<Task>({ it.durationMin ?: 15 }, { -it.priority }))
@@ -116,9 +130,4 @@ object Engine {
     fun tinyFromGoals(goals: List<dev.karthikyernana.steady.data.Goal>): List<String> =
         goals.mapNotNull { g -> g.actions.firstOrNull()?.let { "$it (just 5 minutes)" } }.ifEmpty { listOf("Drink a glass of water and plan tomorrow in one line", "Five minutes on the thing that matters most") }.take(2)
 
-    fun isCheckinTime(s: Snapshot, now: LocalDateTime = LocalDateTime.now(Dates.zone)): Boolean {
-        var sleep = Dates.toMin(s.profile.str("sleep") ?: "23:30") ?: 1410; if (sleep < 360) sleep += 1440
-        val n = now.hour * 60 + now.minute
-        return n >= minOf(sleep - 180, 18 * 60) || n < 4 * 60
-    }
 }
