@@ -3,6 +3,15 @@
 All notable changes to Steady. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 The data contract has its own version (`schemaVersion`, see docs/DATA_MODEL.md); an app release that changes it must ship a migration.
 
+## [1.4.1] - 2026-10-20
+
+### Added
+- Custom money categories: type your own on web (the list offers defaults, ones you've used and budgeted ones); Android has "+ New".
+
+### Fixed
+- Android: device pill no longer wraps letter by letter; offline banner clears once the connection is back; short titles stay on one line.
+- CI: Android end-to-end test on a real emulator (Maestro) with a local server.
+
 ## [1.4.0] - 2026-10-20
 
 Web and the native Android app (also 1.4.0) now match screen for screen.

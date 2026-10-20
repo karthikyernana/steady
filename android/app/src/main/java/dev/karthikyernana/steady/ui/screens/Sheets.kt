@@ -18,15 +18,18 @@ import dev.karthikyernana.steady.data.*
 import dev.karthikyernana.steady.ui.*
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import java.time.Instant
 import java.time.ZoneOffset
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 fun SSheet(onClose: () -> Unit, title: String, content: @Composable ColumnScope.() -> Unit) {
     val state = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(onDismissRequest = onClose, sheetState = state, containerColor = P.ground, contentColor = P.ink, dragHandle = { BottomSheetDefaults.DragHandle(color = P.line2) }) {
-        Column(Modifier.fillMaxWidth().imePadding().verticalScroll(rememberScrollState()).padding(start = 20.dp, end = 20.dp, bottom = 28.dp)) {
+        // a sheet is its own window, so test tags must be re-exposed as resource ids here for the emulator e2e flow
+        Column(Modifier.semantics { testTagsAsResourceId = true }.fillMaxWidth().imePadding().verticalScroll(rememberScrollState()).padding(start = 20.dp, end = 20.dp, bottom = 28.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(title, style = Type.h2.copy(fontSize = 23.sp), color = P.ink, modifier = Modifier.weight(1f))
                 IconButton(onClick = onClose) { Icon(Icons.Rounded.Close, "Close", tint = P.ink2) }

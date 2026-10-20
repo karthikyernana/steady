@@ -1,5 +1,5 @@
 // Steady service worker: offline app shell (network-first, cache fallback) + Web Push + notification clicks.
-const VERSION = 'steady-v1.4.0-r1';
+const VERSION = 'steady-v1.4.1-r1';
 const SHELL = [
   './',
   './index.html',
