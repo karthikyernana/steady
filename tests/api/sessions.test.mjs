@@ -44,8 +44,11 @@ else {
   test('sign out one device; it loses access immediately; others untouched', async () => {
     const ph = (await call('laptop', 'GET', 'auth/sessions')).body.sessions.find(s => !s.current);
     assert.equal((await call('laptop', 'POST', 'auth/sessions/revoke', { id: ph.id })).body.revoked, 1);
-    assert.equal((await call('phone', 'GET', 'auth/me')).body.signedIn, false);
-    assert.equal((await call('phone', 'GET', 'sync/pull?since=0')).status, 401);
+    const meP = (await call('phone', 'GET', 'auth/me')).body;
+    assert.equal(meP.signedIn, false); assert.equal(meP.revoked, true, 'the removed device learns it was removed (so it erases its local copy)');
+    const pull = await call('phone', 'GET', 'sync/pull?since=0');
+    assert.equal(pull.status, 401); assert.equal(pull.body.revoked, true);
+    assert.equal((await call('anon', 'GET', 'sync/pull?since=0')).body.revoked, undefined, 'never signed in is not "revoked"');
     assert.equal((await call('laptop', 'GET', 'auth/me')).body.signedIn, true);
     assert.equal((await call('laptop', 'POST', 'auth/sessions/revoke', { id: ph.id })).status, 404);
   });
@@ -64,6 +67,7 @@ else {
     await call('tab3', 'POST', 'auth/login', { email: 'k@example.com', password: pw });
     assert.equal((await call('laptop', 'POST', 'auth/sessions/revoke-others')).body.revoked, 2);
     assert.equal((await call('tab2', 'GET', 'auth/me')).body.signedIn, false);
+    assert.equal((await call('tab2', 'GET', 'auth/me')).body.revoked, true);
     assert.equal((await call('laptop', 'GET', 'auth/sessions')).body.sessions.length, 1);
   });
 

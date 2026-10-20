@@ -62,9 +62,17 @@ class Sync(private val store: Store, private val api: Api, private val scope: Co
     }
     suspend fun checkSession() {
         if (!signedIn) return
-        runCatching { api.call("GET", "auth/me") }.onSuccess { if (it.bool("signedIn") != true) expired() }
+        runCatching { api.call("GET", "auth/me") }.onSuccess { if (it.bool("signedIn") != true) expired(it.bool("revoked") == true) }
     }
-    private fun expired() { stopLive(); api.clearCookies(); store.setLocal("account", null); set(State.SIGNED_OUT, "Your session ended. Sign in again to keep syncing.") }
+    /** revoked = removed from another device (You > Devices, or a password change): erase the local copy too.
+     *  A plain expiry keeps local data, since it may hold unsynced work. */
+    private fun expired(revoked: Boolean = false) {
+        stopLive(); api.clearCookies()
+        if (revoked) { onRevoked?.invoke(); store.wipe(); set(State.SIGNED_OUT, "This device was signed out from another device, so its data was erased here."); return }
+        store.setLocal("account", null); set(State.SIGNED_OUT, "Your session ended. Sign in again to keep syncing.")
+    }
+    /** Set by the app: cancel reminders etc. before a revoked device erases its data. */
+    @Volatile var onRevoked: (() -> Unit)? = null
 
     // ---- devices: every signed-in session, sign any out (this one included) ----
     data class Device(val id: String, val name: String, val app: String, val place: String?, val firstPlace: String?, val lastSeenAt: Long, val createdAt: Long, val current: Boolean)
@@ -123,7 +131,7 @@ class Sync(private val store: Store, private val api: Api, private val scope: Co
             _status.value = Status(if (liveJob?.isActive == true) State.LIVE else State.OK, null, t)
             true
         } catch (e: ApiError) {
-            if (e.status == 401) { expired(); false }
+            if (e.status == 401) { expired(e.revoked); false }
             else { set(if (e.status == 0) State.OFFLINE else State.ERROR, e.message); false }
         }
     }
@@ -163,7 +171,7 @@ class Sync(private val store: Store, private val api: Api, private val scope: Co
                     if (_status.value.state == State.OK || _status.value.state == State.IDLE) set(State.LIVE)
                     if (r.bool("changed") == true) syncNow()
                 } catch (e: ApiError) {
-                    if (e.status == 401) { expired(); return@launch }
+                    if (e.status == 401) { expired(e.revoked); return@launch }
                     misses++
                     backoff = (if (backoff == 0L) 2000L else backoff * 2).coerceAtMost(60_000L)
                     // one dropped long-poll on a mobile network is normal; say offline only when it keeps failing

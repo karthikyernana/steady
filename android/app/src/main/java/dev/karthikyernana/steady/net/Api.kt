@@ -21,7 +21,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
-class ApiError(val status: Int, message: String) : Exception(message)
+class ApiError(val status: Int, message: String, val revoked: Boolean = false) : Exception(message)
 
 /**
  * Steady's own HTTP API (server/routes.js). Auth is the same httpOnly session cookie the web app uses; the app keeps it
@@ -69,7 +69,7 @@ class Api(private val store: Store, private val secrets: Secrets = KeystoreSecre
         val obj = runCatching { Store.json.parseToJsonElement(text ?: "").jsonObject }.getOrNull()
         if (code !in 200..299 || obj == null) {
             val msg = (obj?.get("error") as? JsonPrimitive)?.content ?: "Server error $code"
-            throw ApiError(code, msg)
+            throw ApiError(code, msg, (obj?.get("revoked") as? JsonPrimitive)?.content == "true")
         }
         return obj
     }

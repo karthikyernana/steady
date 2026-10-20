@@ -1,7 +1,7 @@
 // The whole API in one function (Vercel Hobby allows 12; one router keeps it simple). Mounted at /api/*.
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { query, withOwner } from './db.js';
-import { cookieHeader, currentOwner, startSession, endSession, listSessions, revokeSession, revokeOtherSessions, verifyGoogleIdToken, checkPassphrase, tooManyAttempts, logAttempt, hashToken, findOwner, createOwner, setPassword, signupMode, mayCreate, normEmail, validEmail, verifyGithubOidc } from './auth.js';
+import { cookieHeader, currentOwner, startSession, endSession, listSessions, revokeSession, revokeOtherSessions, isRevoked, verifyGoogleIdToken, checkPassphrase, tooManyAttempts, logAttempt, hashToken, findOwner, createOwner, setPassword, signupMode, mayCreate, normEmail, validEmail, verifyGithubOidc } from './auth.js';
 import { migrate } from './migrate.js';
 import { sendDue, vapidReady } from './push.js';
 import { triggerFor, triggerMode } from './trigger.js';
@@ -49,7 +49,12 @@ function requireCsrf(req) {
 const safeEq = (a, b) => { const x = Buffer.from(String(a)), y = Buffer.from(String(b)); return x.length === y.length && timingSafeEqual(x, y); };
 const ipOf = req => String(req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '').split(',')[0].trim() || null;
 
-async function me(req) { const o = await currentOwner(req); if (!o) fail(401, 'Sign in to sync'); return o; }
+const REVOKED = 'This device was signed out from another device.';
+async function me(req) {
+  const o = await currentOwner(req);
+  if (!o) { if (await isRevoked(req)) { const e = new HttpError(401, REVOKED); e.revoked = true; throw e; } fail(401, 'Sign in to sync'); }
+  return o;
+}
 
 const routes = {
   'GET config': async () => ({
@@ -61,7 +66,7 @@ const routes = {
     agent: agentConfig(),
   }),
 
-  'GET auth/me': async req => { const o = await currentOwner(req); return o ? { signedIn: true, email: o.email } : { signedIn: false }; },
+  'GET auth/me': async req => { const o = await currentOwner(req); return o ? { signedIn: true, email: o.email } : { signedIn: false, revoked: await isRevoked(req) }; },
 
   // step 1 of the sign-in sheet: does this email already have an account?
   'POST auth/check': async (req, res, body) => {
@@ -361,6 +366,6 @@ export async function handle(req, res) {
   } catch (e) {
     const status = e.status || (e.code === '42501' ? 403 : 500);
     if (status >= 500) console.error('[steady api]', e);
-    return send(res, status, { error: status >= 500 && !e.public ? 'Server error' : e.message });
+    return send(res, status, { error: status >= 500 && !e.public ? 'Server error' : e.message, ...(e.revoked ? { revoked: true } : {}) });
   }
 }

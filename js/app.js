@@ -269,6 +269,7 @@ async function boot() {
   applyTheme();
   initStatus();
   render();
+  try { if (sessionStorage.getItem('steady.revoked')) { sessionStorage.removeItem('steady.revoked'); setTimeout(() => toast('This device was signed out from another device, so its data was erased here.'), 400); } } catch { /* ignore */ }
   if (cloudReady()) { syncNow('open'); checkSession(); if (permission() === 'granted') enablePush().catch(() => {}); }
   reconcileNtfy();
   startLocalScheduler(t => toast(`Now: ${t.title}`, { ms: 10000, undo: null }));

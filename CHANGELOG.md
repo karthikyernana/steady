@@ -3,6 +3,11 @@
 All notable changes to Steady. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 The data contract has its own version (`schemaVersion`, see docs/DATA_MODEL.md); an app release that changes it must ship a migration.
 
+## [1.4.2] - 2026-10-20
+
+### Fixed
+- Removing a device (You > Devices, or changing the password) now erases that device's local copy the next time it reaches the server, on web and Android, with a notice saying why. Revoked sessions are kept as tombstones for 90 days so the device can tell "removed" from "expired"; a plain expiry still keeps local data. Tests: tests/qa/revoke_e2e.py (9/9), API sessions test, Android DevicesTest.
+
 ## [1.4.1] - 2026-10-20
 
 ### Added

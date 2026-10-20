@@ -147,6 +147,11 @@ class Store(private val db: Sql) {
     @Synchronized fun clearDirty(items: List<Dirty>) = db.tx { for (d in items) db.exec("update records set dirty=0 where coll=? and id=? and updated_at=?", arrayOf(d.coll, d.id, d.updatedAt)) }
     @Synchronized fun markDirty(coll: String, id: String) = db.exec("update records set dirty=1 where coll=? and id=?", arrayOf(coll, id))
     @Synchronized fun markAllDirty() = db.exec("update records set dirty=1")
+    /** Erase everything on this device (records + settings), e.g. after it was signed out from another device. */
+    fun wipe() {
+        synchronized(this) { db.tx { db.exec("delete from records", arrayOf()); db.exec("delete from kv", arrayOf()) }; mem.values.forEach { it.clear() }; kv.clear() }
+        publish()
+    }
     @Synchronized fun pendingCount(): Int = db.query("select count(*) from records where dirty=1").first()[0]!!.toInt()
 
     // ---- device-only key/value (never synced) ----

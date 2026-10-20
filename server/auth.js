@@ -72,7 +72,7 @@ export async function startSession(res, req, email, device) {
                values ($1, $2, $3, now() + interval '${SESSION_DAYS} days', $4, $5, $6, $5, $6)`,
     [sha256(tok), o.id, (device || '').slice(0, 80), m.ua, m.ip, m.place]);
   const rows = [o];
-  await query(`delete from sessions where expires_at < now()`);
+  await query(`delete from sessions where expires_at < now() and not (expires_at = 'epoch' and last_seen_at > now() - interval '90 days')`);
   res.setHeader('Set-Cookie', cookieHeader(tok, SESSION_DAYS * 86400, req));
   return { id: rows[0].id, email };
 }
@@ -88,10 +88,20 @@ export async function listSessions(ownerId, currentHash) {
 }
 export async function revokeSession(ownerId, id) {
   if (!/^[0-9a-f]{16}$/.test(String(id || ''))) return 0;
-  return (await query(`delete from sessions where owner_id = $1 and left(token_hash, 16) = $2`, [ownerId, id])).rowCount;
+  // kept as a tombstone (expires_at = epoch) so that device learns it was removed and erases its local copy
+  return (await query(`update sessions set expires_at = 'epoch' where owner_id = $1 and left(token_hash, 16) = $2 and expires_at > now()`, [ownerId, id])).rowCount;
 }
 export async function revokeOtherSessions(ownerId, keepHash) {
-  return (await query(`delete from sessions where owner_id = $1 and token_hash <> $2`, [ownerId, keepHash || ''])).rowCount;
+  return (await query(`update sessions set expires_at = 'epoch' where owner_id = $1 and token_hash <> $2 and expires_at > now()`, [ownerId, keepHash || ''])).rowCount;
+}
+
+// true when this request's session was signed out from another device (tombstone), not merely expired or absent.
+// Tombstones older than 90 days are cleaned up here, lazily.
+export async function isRevoked(req) {
+  const tok = parseCookies(req)[COOKIE];
+  if (!tok || tok.length < 40) return false;
+  const { rows } = await query(`select 1 from sessions where token_hash = $1 and expires_at = 'epoch' and last_seen_at > now() - interval '90 days'`, [sha256(tok)]);
+  return rows.length > 0;
 }
 
 export async function endSession(res, req) {

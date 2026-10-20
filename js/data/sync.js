@@ -2,7 +2,7 @@
 // Local-first: IndexedDB is always the source of truth on the device. Changes are queued ("dirty"), pushed with
 // last-write-wins per record, and remote changes are pulled incrementally by a server cursor.
 // The browser never sees database credentials; it holds only an httpOnly session cookie.
-import { S, SYNCED, local, setLocal, putRaw, emitExternal } from './store.js';
+import { S, SYNCED, local, setLocal, putRaw, emitExternal, wipeAll } from './store.js';
 import { pick } from '../core/merge.js';
 import { migrateCollections, SCHEMA_VERSION } from '../core/schema.js';
 
@@ -26,7 +26,7 @@ export async function api(method, path, body) {
   } catch { throw new ApiError(0, navigator.onLine ? "Couldn't reach Steady's server." : 'Offline.'); }
   let data = null;
   try { data = await res.json(); } catch { /* non-JSON (e.g. static host without API) */ }
-  if (!res.ok || !data) throw new ApiError(res.status, data?.error || (res.status === 404 ? 'Cloud sync is not available on this host.' : `Server error ${res.status}`));
+  if (!res.ok || !data) { const e = new ApiError(res.status, data?.error || (res.status === 404 ? 'Cloud sync is not available on this host.' : `Server error ${res.status}`)); e.revoked = !!data?.revoked; throw e; }
   return data;
 }
 
@@ -93,10 +93,16 @@ export async function signOut() {
 }
 export async function checkSession() {
   if (!account() || !navigator.onLine) return;
-  try { const r = await api('GET', 'auth/me'); if (!r.signedIn) await expired(); } catch { /* keep state; retry later */ }
+  try { const r = await api('GET', 'auth/me'); if (!r.signedIn) await expired(!!r.revoked); } catch { /* keep state; retry later */ }
 }
-async function expired() {
+// revoked = this device was removed from another device (You > Devices, or a password change): its local copy goes too,
+// so a removed phone or a shared computer stops showing the account. A plain expiry keeps local data (it may hold unsynced work).
+async function expired(revoked = false) {
   stopLive();
+  if (revoked) {
+    await wipeAll(); try { localStorage.clear(); sessionStorage.setItem('steady.revoked', '1'); } catch { /* ignore */ }
+    location.hash = '#/'; location.reload(); return;
+  }
   await setLocal('account', null);
   setStatus({ state: 'signedout', error: 'Your session ended. Sign in again to keep syncing.' });
 }
@@ -140,7 +146,7 @@ async function doSync() {
     setStatus({ state: live.on ? 'live' : 'ok', lastSyncedAt: t, error: null, pulled });
     return true;
   } catch (e) {
-    if (e.status === 401) { await expired(); return false; }
+    if (e.status === 401) { await expired(!!e.revoked); return false; }
     setStatus({ state: navigator.onLine ? 'error' : 'offline', error: e.message });
     return false;
   }
@@ -196,7 +202,7 @@ async function loop() {
     live.ctl = new AbortController();
     try {
       const res = await fetch(`${API}sync/wait?since=${local('syncCursor', 0)}`, { credentials: 'same-origin', cache: 'no-store', headers: { 'X-Steady': '1' }, signal: live.ctl.signal });
-      if (res.status === 401) { await expired(); return; }
+      if (res.status === 401) { const j = await res.json().catch(() => null); await expired(!!j?.revoked); return; }
       if (!res.ok) throw new Error(res.status);
       const r = await res.json();
       live.backoff = 0;

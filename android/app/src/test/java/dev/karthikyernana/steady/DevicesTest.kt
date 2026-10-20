@@ -40,4 +40,24 @@ class DevicesTest {
         assertFalse(app.sync.signedIn)
         app.sync.logIn(email, "brand new password"); app.sync.deleteAccount("brand new password")
     }
+
+    /** Removed from another device: the phone erases its local copy on its next contact with the server. */
+    @Test fun removedPhoneErasesItsData() = runBlocking {
+        val app: SteadyApp = ApplicationProvider.getApplicationContext()
+        val email = "qa-android-rv-${System.currentTimeMillis()}@example.com"; val pw = "correct horse battery"
+        app.sync.signUp(email, pw, "QA")
+        app.store.save("tasks", kotlinx.serialization.json.buildJsonObject { put("id", kotlinx.serialization.json.JsonPrimitive("rv1")); put("title", kotlinx.serialization.json.JsonPrimitive("Revoke canary")); put("status", kotlinx.serialization.json.JsonPrimitive("open")) })
+        assertTrue(app.sync.syncNow())
+        val laptop = WebClient(); laptop.login(email, pw)
+        val phoneId = (laptop.call("GET", "auth/sessions")["sessions"] as kotlinx.serialization.json.JsonArray)
+            .map { it as kotlinx.serialization.json.JsonObject }.single { it["current"].toString() != "true" }["id"].toString().trim('"')
+        laptop.call("POST", "auth/sessions/revoke", kotlinx.serialization.json.buildJsonObject { put("id", kotlinx.serialization.json.JsonPrimitive(phoneId)) })
+        assertFalse(app.sync.syncNow())
+        assertFalse(app.sync.signedIn)
+        assertNull(app.store.get("tasks", "rv1"))
+        assertTrue(app.store.snapshot.value.toString(), app.store.snapshot.value.let { s -> s.toString().contains("Revoke canary").not() })
+        assertTrue(app.sync.status.value.error!!.contains("signed out from another device"))
+        laptop.call("POST", "auth/delete", kotlinx.serialization.json.buildJsonObject { put("password", kotlinx.serialization.json.JsonPrimitive(pw)) })
+        Unit
+    }
 }
