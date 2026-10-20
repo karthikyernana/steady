@@ -4,6 +4,7 @@
 appId: dev.karthikyernana.steady.debug
 ---
 - launchApp: { clearState: true }
+- extendedWaitUntil: { visible: "Sign in or create account", timeout: 60000 }
 - tapOn: "Sign in or create account"
 - tapOn: { id: "si-email" }
 - inputText: ${EMAIL}
