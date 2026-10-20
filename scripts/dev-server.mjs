@@ -10,7 +10,10 @@ const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '
 
 createServer(async (req, res) => {
   const u = new URL(req.url, 'http://x');
-  if (u.pathname.startsWith('/api/')) return handle(req, res);
+  if (u.pathname.startsWith('/api/')) {
+    if (process.env.LOG_REQUESTS) res.on('finish', () => console.log(req.method, u.pathname, res.statusCode));
+    return handle(req, res);
+  }
   let p = normalize(decodeURIComponent(u.pathname)).replace(/^(\.\.[/\\])+/, '');
   if (p.endsWith('/')) p += 'index.html';
   const file = join(ROOT, p);

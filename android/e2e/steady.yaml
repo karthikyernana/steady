@@ -8,8 +8,10 @@ env:
 - tapOn: "Sign in or create account"
 - tapOn: "Email"
 - inputText: ${EMAIL}
+- hideKeyboard
+- takeScreenshot: shots/e2e-00-email
 - tapOn: "Continue"
-- extendedWaitUntil: { visible: "Create account", timeout: 20000 }
+- extendedWaitUntil: { visible: "New here.*", timeout: 25000 }
 - tapOn: "Your name"
 - inputText: "Karthik"
 - tapOn: "Password (8+ characters)"

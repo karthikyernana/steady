@@ -80,7 +80,7 @@ jobs:
         run: |
           node scripts/migrate.mjs
           nohup node tests/mocks/ai-mock.mjs 8791 > mock.log 2>&1 &
-          PORT=8790 SARVAM_BASE_URL=http://127.0.0.1:8791 GEMINI_BASE_URL=http://127.0.0.1:8791 SARVAM_API_KEY=x GEMINI_API_KEY=x nohup node scripts/dev-server.mjs > dev.log 2>&1 &
+          LOG_REQUESTS=1 PORT=8790 SARVAM_BASE_URL=http://127.0.0.1:8791 GEMINI_BASE_URL=http://127.0.0.1:8791 SARVAM_API_KEY=x GEMINI_API_KEY=x nohup node scripts/dev-server.mjs > dev.log 2>&1 &
           for i in $(seq 1 30); do curl -sf localhost:8790/api/config && break; sleep 1; done
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: 17 }
@@ -109,7 +109,7 @@ jobs:
           script: |
             adb install -r android/app/build/outputs/apk/debug/app-debug.apk
             mkdir -p shots
-            maestro test --format junit --output e2e-report.xml -e EMAIL=$EMAIL android/e2e/steady.yaml || (adb logcat -d | grep -iE "steady|AndroidRuntime" | tail -200 > logcat.txt; exit 1)
+            maestro test --format junit --output e2e-report.xml --debug-output maestro-debug -e EMAIL=$EMAIL android/e2e/steady.yaml || (adb logcat -d | grep -iE "steady|AndroidRuntime|okhttp|System.err" | tail -300 > logcat.txt; exit 1)
       - name: Server received the phone's data
         run: |
           node -e "
@@ -131,3 +131,4 @@ jobs:
             e2e-report.xml
             logcat.txt
             dev.log
+            maestro-debug/
