@@ -7,7 +7,7 @@ import { permission, requestPermission, showLocal, ntfyPublish, reconcileNtfy, r
 import { downloadExport, importJSON } from '../../data/backup.js';
 import { agentMemory, resetAgentMemory } from '../../data/agent.js';
 
-export const APP_VERSION = '1.4.2';
+export const APP_VERSION = '1.5.0';
 let cfg = local('serverConfig') || null;
 serverConfig().then(c => { const changed = JSON.stringify(c) !== JSON.stringify(cfg); cfg = c; if (changed) requestRender(); }).catch(() => {});
 

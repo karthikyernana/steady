@@ -179,7 +179,7 @@ fun MoneyScreen() {
                 Bars(byDay.mapIndexed { i, v -> if (isNow && i + 1 > today) 0f else v }, byDay.indices.map { i -> if (i == 0 || (i + 1) % 7 == 0) "${i + 1}" else "" }, height = 90.dp, highlightLast = false, highlight = if (isNow) today - 1 else -1)
             }
         }
-        if (entries.isEmpty()) item(key = "empty") { EmptyNote("Nothing logged this month.", "Type \"250 lunch swiggy\" above, or just say it to the mic.") }
+        if (entries.isEmpty()) item(key = "empty") { EmptyNote("Nothing logged this month.", "Type \"250 lunch swiggy\" above, or hold Ask and just say it.") }
         entries.groupBy { it.date }.toSortedMap(compareByDescending { it }).forEach { (day, xs) ->
             item(key = "d-$day") { Row(Modifier.padding(start = 4.dp, end = 4.dp, top = 10.dp)) { Eyebrow(Dates.fmtDateKey(day)); Spacer(Modifier.weight(1f)); Text(inr(xs.filter { !it.isIncome }.sumOf { it.amount }), style = Type.small, color = P.muted) } }
             items(xs, key = { it.id }) { m ->

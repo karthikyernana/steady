@@ -90,8 +90,8 @@ class UiFlowTest {
         rule.onNodeWithTag("tab-insights").performClick()
         rule.onNodeWithTag("remember").assertExists()
 
-        // Voice while signed out: typing is understood on the phone; drafts can be fixed before accepting
-        rule.onNodeWithTag("mic-fab").performClick(); rule.waitForIdle()
+        // Voice while signed out (press and hold Ask): typing is understood on the phone; drafts can be fixed before accepting
+        rule.onNodeWithTag("ask-fab").performTouchInput { longClick(durationMillis = 900) }; rule.waitForIdle()
         rule.onNodeWithText("Typing works right here", substring = true).assertExists()
         rule.onNodeWithTag("voice-text").performTextInput("paid swiggy for lunch, remind me to call amma in 10 minutes")
         rule.onNodeWithTag("voice-understand").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick); rule.waitForIdle()

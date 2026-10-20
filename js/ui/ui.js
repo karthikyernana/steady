@@ -48,7 +48,11 @@ export function openSheet({ title = '', body = '', onMount, cls = '' } = {}) {
   };
   const api = { el: wrap, close, onClose: null };
   stack.push(api);
-  wrap.querySelector('.backdrop').onclick = close;
+  // tap outside closes, but only a tap that STARTED on the backdrop: the finger that opened the sheet (Ask hold) lifts
+  // over the backdrop, and Chrome on Android sends a click there after a long press. That must not close it.
+  const bd = wrap.querySelector('.backdrop'); let downOnBd = false;
+  bd.addEventListener('pointerdown', () => { downOnBd = true; });
+  bd.onclick = () => { if (downOnBd) close(); downOnBd = false; };
   wrap.querySelector('[data-close]').onclick = close;
   wrap.classList.add('open');
   onMount?.(wrap.querySelector('.sheet-body'), api);
@@ -58,7 +62,7 @@ export function openSheet({ title = '', body = '', onMount, cls = '' } = {}) {
   if (first && matchMedia('(pointer:fine)').matches) setTimeout(() => first.focus(), 60);
   return api;
 }
-document.addEventListener('keydown', e => { if (e.key === 'Escape' && stack.length) stack[stack.length - 1].close(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && stack.length) { e.preventDefault(); stack[stack.length - 1].close(); } });
 export const sheetOpen = () => stack.length > 0;
 
 export function confirmSheet(text, ok = 'Confirm', danger = false) {

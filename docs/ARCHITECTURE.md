@@ -25,9 +25,10 @@ Steady is a local-first PWA with a small server. The device is always the source
 | `js/data/sync.js` | Account calls, dirty queue, push/pull by server cursor, live long-poll loop. | `store`, `core/*` |
 | `js/core/money.js`, `js/core/agent.js` | Money parsing/summaries; the voice agent's shared core (context, refs, prompt, response schema, validation, rules planner, learning). Imported by the browser **and** the server. | `core/*` |
 | `js/data/agent.js` | Calls `/api/agent/*`, falls back to the on-device planner, applies accepted drafts with undo. | `store`, `sync`, `core/*` |
+| `js/data/chat.js` | Chat API calls (`/api/agent/chat`, `/api/agent/chats`), why chat is unavailable (signed out / offline / not set up), last chat kept for offline reading. | `store`, `sync` |
 | `js/data/backup.js` | Export/import through the same merge rules. | `store`, `core` |
 | `js/platform/notify.js` | Permission, local notifications, Web Push subscription, server reminder queue, ntfy backup. | `store`, `sync` |
-| `js/ui/*` | `app.js` (shell, router, render loop), `voice.js` (the mic, recorder, draft cards), `views/*` (incl. `money.js`), `ui.js` (sheets, toasts, segmented); shell: five tabs + **You** behind the header avatar, the mic as a separate floating button, `motion.js` (springs, FLIP, view transitions, indicators), `charts.js`, `icons.js`. | everything above |
+| `js/ui/*` | `app.js` (shell, router, render loop), `voice.js` (the mic, recorder, draft cards), `views/*` (incl. `money.js`), `ui.js` (sheets, toasts, segmented); shell: five tabs + **You** behind the header avatar, one floating **Ask** button (tap = Chat, hold = the voice agent; `press.js` holds the rule), `motion.js` (springs, FLIP, view transitions, indicators), `charts.js`, `icons.js`, `cards.js` (chat cards, pure renderers), `views/chat.js` (Chat, opened by tapping Ask: a panel over the app, a full-height sheet on phones and docked bottom-right on desktop; pure rules in `core/chat-ui.js`). | everything above |
 
 ## Render loop
 
@@ -52,6 +53,17 @@ Postgres enforces isolation with forced row-level security: every query runs ins
 `/api/agent/transcribe` (Sarvam Saaras v3) → `/api/agent/plan` (Gemini, falling back to Sarvam `sarvam-105b`, then a rules
 planner) → validated **drafts** → the browser applies only what the user accepts, through the normal store + sync.
 Per-user profile memory lives in `agent_memory` (RLS). Keys never leave the server. Full detail: [VOICE_AGENT.md](VOICE_AGENT.md).
+
+## Chat agent (phase 1)
+
+`POST /api/agent/chat` → `server/chat.js`: one agent with **read-only** tools (`server/chat-tools.js`: tasks, goals,
+money, thoughts, thought search, the Insights summary) over the user's own `records`, each statement inside
+`withOwner()` (RLS). Model router: Groq `gpt-oss-120b` → Gemini Flash-Lite → Cloudflare Workers AI (OpenAI-compatible
+tool calling, each optional by env), ≤ 5 tool rounds, then a forced `reply { text, cards }`. Cards are a fixed kit of 11
+components validated by `server/chat-cards.js` and stored as **query specs**; the server computes their figures from
+real rows whenever a chat is shown, so the model never supplies numbers. Chats live in `agent_chats` / `agent_messages`
+(RLS), outside record sync. Web `js/ui/views/chat.js` + `js/ui/cards.js`, Android `ui/screens/Chat.kt` +
+`ChatCards.kt` render cards natively. Entry: a header button beside You (five tabs unchanged). Full detail: [AGENT.md](AGENT.md).
 
 ## Auth
 

@@ -19,8 +19,7 @@ def open_you(pg):
     pg.wait_for_timeout(800)
 
 def open_voice(pg):
-    sel = '[data-testid=mic]:visible' if pg.locator('[data-testid=mic]:visible').count() else '#mic-fab'
-    pg.locator(sel).first.click(); pg.wait_for_selector('#vx-text')
+    pg.evaluate("document.activeElement?.blur()"); pg.keyboard.press('v'); pg.wait_for_selector('#vx-text')   # V = the voice agent (Ask: tap = Chat, hold = talk)
     pg.fill('#vx-text', 'spent 250 on lunch at swiggy, finished DSA problems and remind me to call amma tomorrow at 6pm')
     pg.click('[data-testid=vx-understand]'); pg.wait_for_selector('.dcard'); pg.wait_for_timeout(600)
 
@@ -51,7 +50,7 @@ with sync_playwright() as p:
                 chk = pg.evaluate('''() => {
                   const out = [], vis = el => el && el.offsetParent !== null;
                   if (!document.querySelector('.v-you')) out.push('You view did not open from the header');
-                  const bar = document.querySelector('.tabbar'), mic = document.getElementById('mic-fab');
+                  const bar = document.querySelector('.tabbar'), mic = document.getElementById('ask-fab');
                   if (vis(bar)) {
                     const n = bar.querySelectorAll('.tab').length; if (n !== 5) out.push(`tab bar has ${n} tabs`);
                     if (bar.querySelector('[data-route=you]')) out.push('You is still in the tab bar');

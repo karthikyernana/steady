@@ -146,7 +146,7 @@ fun TodayScreen() {
             items(open, key = { "t-" + it.id }) { t -> TaskRow(t, s, Modifier.animateItem(), onEdit = { editing = t }) }
         } else if (todays.isEmpty()) item(key = "empty") {
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
-                EmptyNote("A clear page.", "Add one small thing above, or tap the mic and just say it.")
+                EmptyNote("A clear page.", "Add one small thing above, or hold Ask and just say it.")
                 val acts = s.goals.flatMap { g -> g.actions.take(2).map { g to it } }.take(4)
                 if (acts.isNotEmpty()) @OptIn(ExperimentalLayoutApi::class) FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     acts.forEach { (g, t) -> ChipButton(t) { quickAdd(t, g.id); c.toast("Added to today.", null) } }

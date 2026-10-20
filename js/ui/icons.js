@@ -5,6 +5,12 @@ export const I = {
   thoughts: s('<path d="M5 18.5V6.5A2.5 2.5 0 0 1 7.5 4h9A2.5 2.5 0 0 1 19 6.5v7a2.5 2.5 0 0 1-2.5 2.5H9z"/><path d="M9 9h6M9 12h4"/>'),
   money: s('<rect x="3.5" y="6" width="17" height="12.5" rx="3"/><path d="M3.5 10h17"/><path d="M15.5 14.5h2"/><path d="M6.5 6l8.5-2.5 1 2.5"/>'),
   insights: s('<path d="M4 19h16"/><path d="M7 15v-3M11 15V8M15 15v-5M19 15V5"/>'),
+  chat: s('<path d="M4.5 6.5A2.5 2.5 0 0 1 7 4h10a2.5 2.5 0 0 1 2.5 2.5v7A2.5 2.5 0 0 1 17 16h-6.5L6 19.5V16h0a2.5 2.5 0 0 1-1.5-2.3z"/><path d="M8.5 9h7M8.5 12h4.5"/>'),
+  // Ask: a speech bubble holding a small voice wave (tap = chat, hold = talk); deliberately not a sparkle
+  ask: s('<path d="M4.5 6.8A2.8 2.8 0 0 1 7.3 4h9.4a2.8 2.8 0 0 1 2.8 2.8v6.1a2.8 2.8 0 0 1-2.8 2.8H11.2L7 19.3v-3.6h.3a2.8 2.8 0 0 1-2.8-2.8z"/><path d="M9.4 8.7v2.4M12 7.6v4.6M14.6 8.7v2.4"/>'),
+  down: s('<path d="M6.5 9.5l5.5 5.5 5.5-5.5"/>'),
+  send: s('<path d="M12 19V5.5M6.5 11L12 5.5l5.5 5.5"/>', 'stroke-width="2"'),
+  history: s('<path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3"/><path d="M4.5 4.5v3.2h3.2"/><path d="M12 8v4.2l2.8 1.8"/>'),
   you: s('<circle cx="12" cy="8.5" r="3.5"/><path d="M5 19.5c1.4-3.2 4-4.5 7-4.5s5.6 1.3 7 4.5"/>'),
   check: s('<path d="M5 12.5l4.2 4L19 7"/>', 'stroke-width="2.2"'),
   skip: s('<path d="M5 12h10"/><path d="M11.5 8l4 4-4 4"/><path d="M19 6.5v11"/>'),
@@ -33,5 +39,6 @@ export const I = {
   income: s('<path d="M12 19V6M6.5 11.5L12 6l5.5 5.5"/>'),
   expense: s('<path d="M12 5v13M6.5 12.5L12 18l5.5-5.5"/>'),
   flame: s('<path d="M12 21c-3.6 0-6.5-2.6-6.5-6.2 0-2.6 1.5-4.4 3-6 .4 1.6 1.2 2.6 2.3 3.1C10.6 8.6 11.6 5.4 14.5 3c-.2 3 1.2 4.6 2.6 6.3 1.2 1.5 1.9 3 1.9 5.2 0 3.8-3.1 6.5-7 6.5z"/>'),
+  edit: s('<path d="M14.5 5.5l4 4M4.5 19.5l1-4.2L15.8 5a1.4 1.4 0 0 1 2 0l1.2 1.2a1.4 1.4 0 0 1 0 2L8.7 18.5z"/>'),
   trash: s('<path d="M5 7h14M10 7V4.5h4V7M7 7l1 13h8l1-13"/>'),
 };

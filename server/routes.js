@@ -6,6 +6,7 @@ import { migrate } from './migrate.js';
 import { sendDue, vapidReady } from './push.js';
 import { triggerFor, triggerMode } from './trigger.js';
 import { AgentError, agentConfig, countUse, transcribe, plan, learnFrom, getMemory, memorySummary, resetMemory } from './agent.js';
+import { chat, chatConfig, listChats, getChat, deleteChat, renameChat } from './chat.js';
 
 const COLLS = new Set(['tasks', 'goals', 'thoughts', 'checkins', 'meta', 'money']);
 const MAX_BODY = 2_000_000;
@@ -64,6 +65,7 @@ const routes = {
     googleClientId: process.env.GOOGLE_CLIENT_ID || null,
     vapidPublicKey: process.env.VAPID_PUBLIC_KEY || null,
     agent: agentConfig(),
+    chat: chatConfig(),
   }),
 
   'GET auth/me': async req => { const o = await currentOwner(req); return o ? { signedIn: true, email: o.email } : { signedIn: false, revoked: await isRevoked(req) }; },
@@ -336,6 +338,17 @@ const routes = {
   'GET agent/memory': async req => { const o = await me(req); return { memory: memorySummary(await getMemory(o.id)) }; },
   'POST agent/memory/reset': async req => { requireCsrf(req); const o = await me(req); await resetMemory(o.id); return { ok: true }; },
 
+  // ---- chat agent (server/chat.js): read-only tools over the user's own rows, replies with text + cards ----
+  'POST agent/chat': async (req, res, body) => {
+    requireCsrf(req);
+    const o = await me(req);
+    return chat(o.id, { chatId: body.chatId || null, message: body.message, tz: body.tz });
+  },
+  'GET agent/chats': async req => { const o = await me(req); return listChats(o.id); },
+  'GET agent/chats/:id': async req => { const o = await me(req); return getChat(o.id, req.params.id, new URL(req.url, 'http://x').searchParams.get('tz')); },
+  'PATCH agent/chats/:id': async (req, res, body) => { requireCsrf(req); const o = await me(req); return renameChat(o.id, req.params.id, body && body.title); },
+  'DELETE agent/chats/:id': async req => { requireCsrf(req); const o = await me(req); return deleteChat(o.id, req.params.id); },
+
   // ---- ops ----
   'POST admin/migrate': async req => {
     const want = process.env.MIGRATE_SECRET;
@@ -358,9 +371,12 @@ export async function handle(req, res) {
   try {
     const u = new URL(req.url, 'http://x');
     const path = u.pathname.replace(/^\/api\/?/, '').replace(/\/$/, '');
-    const fn = routes[`${req.method} ${path}`];
-    if (!fn) return send(res, routes[`GET ${path}`] || routes[`POST ${path}`] ? 405 : 404, { error: 'Not found' });
-    const body = req.method === 'POST' ? (RAW.has(path) ? await readRaw(req) : await readBody(req)) : {};
+    let key = path;
+    const pm = /^(agent\/chats)\/([^/]+)$/.exec(path);          // the one parameterised route family
+    if (pm) { key = `${pm[1]}/:id`; req.params = { id: decodeURIComponent(pm[2]) }; }
+    const fn = routes[`${req.method} ${key}`];
+    if (!fn) return send(res, ['GET', 'POST', 'PATCH', 'DELETE'].some(m => routes[`${m} ${key}`]) ? 405 : 404, { error: 'Not found' });
+    const body = (req.method === 'POST' || req.method === 'PATCH') ? (RAW.has(path) ? await readRaw(req) : await readBody(req)) : {};
     const out = await fn(req, res, body);
     return send(res, 200, out);
   } catch (e) {

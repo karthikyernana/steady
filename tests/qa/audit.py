@@ -20,16 +20,32 @@ with sync_playwright() as p:
             pg.evaluate(f"location.hash='#/{r}'"); pg.wait_for_timeout(700)
             report[f'{name}-{scheme}-{r}']=pg.evaluate(AUD)
             pg.screenshot(path=f'{OUT}/{TAG}-{name}-{scheme}-{r}.png', full_page=(scheme=='light'))
+        # Chat (opened by tapping Ask; signed out here, so the calm "needs your account" state) + the history sheet on phones
+        pg.evaluate("location.hash='#/today'"); pg.wait_for_timeout(600)
+        pg.click('#ask-fab'); pg.wait_for_selector('[data-testid=chat-dock]'); pg.wait_for_timeout(700)
+        report[f'{name}-{scheme}-chat']=pg.evaluate(AUD); pg.screenshot(path=f'{OUT}/{TAG}-{name}-{scheme}-chat.png')
+        wide = vp['width'] >= 960
+        pg.click('[data-testid=chat-hist-btn]'); pg.wait_for_selector('[data-testid=chat-hist-pane]' if wide else '.chat-hist-sheet .sheet'); pg.wait_for_timeout(600)
+        report[f'{name}-{scheme}-chat-history']=pg.evaluate(AUD); pg.screenshot(path=f'{OUT}/{TAG}-{name}-{scheme}-chat-history.png')
+        if wide: pg.click('[data-testid=chat-hist-btn]'); pg.wait_for_timeout(300)
+        else: pg.keyboard.press('Escape'); pg.wait_for_timeout(500)
+        # every style draws the chat panel (signed out state); screenshots only on the light pass
+        if scheme == 'light' or os.environ.get('AUDIT_STYLES_DARK'):
+            for st in ['paper', 'grid', 'papercut', 'midnight', 'liquid']:
+                pg.evaluate(f"document.documentElement.dataset.style = '{st}'"); pg.wait_for_timeout(250)
+                report[f'{name}-{scheme}-chat-{st}']=pg.evaluate(AUD); pg.screenshot(path=f'{OUT}/{TAG}-{name}-{scheme}-chat-{st}.png')
+            pg.evaluate("delete document.documentElement.dataset.style"); pg.wait_for_timeout(200)
+        pg.click('[data-testid=chat-close]'); pg.wait_for_timeout(500)
         pg.evaluate("location.hash='#/today'"); pg.wait_for_timeout(600)
         pg.locator('.task .t-main').first.click(); pg.wait_for_timeout(700)
         report[f'{name}-{scheme}-sheet']=pg.evaluate(AUD); pg.screenshot(path=f'{OUT}/{TAG}-{name}-{scheme}-sheet.png')
         pg.keyboard.press('Escape'); pg.wait_for_timeout(500)
         # voice agent sheet (signed out here, so the typing fallback) with draft cards
-        pg.click('#mic-fab'); pg.wait_for_selector('#vx-text')
+        bx=pg.locator('#ask-fab').bounding_box(); pg.mouse.move(bx['x']+bx['width']/2, bx['y']+bx['height']/2); pg.mouse.down(); pg.wait_for_selector('#vx-text'); pg.mouse.up()   # hold Ask = the voice agent
         pg.fill('#vx-text', 'spent 250 on lunch at swiggy, finished DSA problems and remind me to call amma tomorrow at 6pm'); pg.click('[data-testid=vx-understand]'); pg.wait_for_selector('.dcard'); pg.wait_for_timeout(500)
         report[f'{name}-{scheme}-voice']=pg.evaluate(AUD); pg.screenshot(path=f'{OUT}/{TAG}-{name}-{scheme}-voice.png')
         c.close()
     b.close()
 for k,v in report.items():
     if v: print(k, v)
-print('errors', errs)
+print("checked", len(report), "screens;", sum(len(v) for v in report.values()), "issues"); print("errors", errs)

@@ -29,7 +29,7 @@ with sync_playwright() as p:
     A, a = mk({'width': 390, 'height': 844}, True); onboard(a)
     a.fill('#qa', 'DSA: 2 problems'); a.press('#qa', 'Enter'); a.wait_for_timeout(300)
     # signed out: the mic still works by typing, understood on this device
-    a.click('#mic-fab'); a.wait_for_selector('[data-testid=voice-sheet][data-state=typing]')
+    (a.evaluate("document.activeElement?.blur()"), a.keyboard.press('v')); a.wait_for_selector('[data-testid=voice-sheet][data-state=typing]')
     rec('signed out → typing fallback with on-device understanding', 'Sign in' in a.inner_text('[data-testid=voice-sheet]'))
     a.fill('#vx-text', 'chai 30 rupees'); a.click('[data-testid=vx-understand]'); a.wait_for_selector('.dcard')
     rec('on-device draft without the server', a.inner_text('[data-testid=vx-meta]').endswith('this device') and a.locator('[data-testid=draft-money]').count() == 1, a.inner_text('[data-testid=vx-meta]'))
@@ -43,8 +43,8 @@ with sync_playwright() as p:
     bp.fill('[data-testid=si-password]', PW); bp.click('[data-testid=si-login]'); bp.wait_for_selector('[data-testid=sync-status]', timeout=10000)
     bp.evaluate("location.hash='#/money'"); a.evaluate("location.hash='#/today'"); a.wait_for_timeout(800)
     # ---- voice: record → transcript → drafts
-    a.reload(); a.wait_for_selector('#mic-fab'); a.wait_for_timeout(600)
-    a.click('#mic-fab'); a.wait_for_selector('[data-testid=voice-sheet][data-state=listening]', timeout=5000)
+    a.reload(); a.wait_for_selector('#ask-fab'); a.wait_for_timeout(600)
+    (a.evaluate("document.activeElement?.blur()"), a.keyboard.press('v')); a.wait_for_selector('[data-testid=voice-sheet][data-state=listening]', timeout=5000)
     a.wait_for_timeout(1800)
     if SHOTS: a.screenshot(path=f'{SHOTS}/e2e-listening.png')
     rec('listening state with live waveform', a.locator('.vx-wave').count() == 1)
@@ -75,7 +75,7 @@ with sync_playwright() as p:
     bp.wait_for_timeout(600)
     rec('laptop Money tab shows it', '260' in bp.inner_text('[data-testid=money-spent]'), bp.inner_text('[data-testid=money-spent]'))
     # learning: a correction before accept reaches the server profile
-    a.click('#mic-fab'); a.wait_for_selector('[data-testid=voice-sheet]'); a.wait_for_timeout(300)
+    (a.evaluate("document.activeElement?.blur()"), a.keyboard.press('v')); a.wait_for_selector('[data-testid=voice-sheet]'); a.wait_for_timeout(300)
     a.click('[data-vx=type]'); a.fill('#vx-text', 'rapido 80'); a.click('[data-testid=vx-understand]'); a.wait_for_selector('.dcard[data-type=money]')
     a.click('.dcard[data-type=money] [data-vx=edit]'); a.fill('.dcard[data-type=money] [data-f=category]', 'Commute')
     a.click('[data-testid=vx-accept]'); a.wait_for_timeout(1200)

@@ -36,7 +36,7 @@ jobs:
         run: |
           node scripts/migrate.mjs
           nohup node tests/mocks/ai-mock.mjs 8791 > mock.log 2>&1 &
-          PORT=8790 SARVAM_BASE_URL=http://127.0.0.1:8791 GEMINI_BASE_URL=http://127.0.0.1:8791 SARVAM_API_KEY=x GEMINI_API_KEY=x nohup node scripts/dev-server.mjs > dev.log 2>&1 &
+          PORT=8790 SARVAM_BASE_URL=http://127.0.0.1:8791 GEMINI_BASE_URL=http://127.0.0.1:8791 GROQ_BASE_URL=http://127.0.0.1:8791/openai/v1 SARVAM_API_KEY=x GEMINI_API_KEY=x GROQ_API_KEY=x nohup node scripts/dev-server.mjs > dev.log 2>&1 &
           for i in $(seq 1 30); do curl -sf localhost:8790/api/config && break; sleep 1; done
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: 17 }

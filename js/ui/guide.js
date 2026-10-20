@@ -5,7 +5,7 @@ import { esc } from '../core/util.js';
 import { local, setLocal } from '../data/store.js';
 
 export const PAGES = [
-  { icon: I.mic, title: 'Just say it', line: 'Tap the mic and talk, in English or Telugu. Steady turns it into tasks, goals or money entries for you to accept.', type: '"Remind me to call amma in 10 minutes"', becomes: ['Task', 'Today, in 10 min', 'Reminder on'] },
+  { icon: I.ask, title: 'Just say it', line: 'Hold Ask and talk, in English or Telugu. Steady turns it into tasks, goals or money entries for you to accept. Tap Ask to chat about your data.', type: '"Remind me to call amma in 10 minutes"', becomes: ['Task', 'Today, in 10 min', 'Reminder on'] },
   { icon: I.today, title: 'Today', line: "Type tasks the way you'd text a friend. Time, length and day are picked up for you.", type: 'gym 7pm 45m', becomes: ['Gym', '7:00 PM', '45 min'] },
   { icon: I.goals, title: 'Goals', line: 'A big goal becomes one small milestone a week, so you always know the next step.', type: 'Crack placements by March', becomes: ['Week 1: resume', 'Week 2: mocks', '…'] },
   { icon: I.money, title: 'Money', line: 'Log spending in a few words. Steady sorts the category and shows where it went.', type: '250 lunch swiggy', becomes: ['₹250', 'Food', 'Swiggy'] },

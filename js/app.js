@@ -7,7 +7,8 @@ import { openGuide, guideSeen } from './ui/guide.js';
 import { renderGoals } from './ui/views/goals.js';
 import { renderThoughts, mountThoughts } from './ui/views/thoughts.js';
 import { renderMoney, mountMoney } from './ui/views/money.js';
-import { micButton, mountMic, openVoice } from './ui/voice.js';
+import { askButton, mountAsk, openVoice, setMicTarget } from './ui/voice.js';
+import { setChatOpen, paintChat, dictateInto, chatEscape } from './ui/views/chat.js';
 import { renderInsights, insightsForExport } from './ui/views/insights.js';
 import { renderSettings, mountSettings, openSignIn } from './ui/views/settings.js';
 import { renderOnboarding, mountOnboarding, mark } from './ui/views/onboarding.js';
@@ -21,11 +22,15 @@ const ROUTES = {
   money: { label: 'Money', icon: I.money, render: renderMoney, mount: mountMoney },
   thoughts: { label: 'Thoughts', icon: I.thoughts, render: renderThoughts, mount: mountThoughts },
   insights: { label: 'Insights', icon: I.insights, render: renderInsights },
+  chat: { label: 'Chat', icon: I.chat, panel: true, tab: false },      // a panel over the app (views/chat.js), opened by tapping Ask (and the side rail on desktop)
   you: { label: 'You', icon: I.you, render: renderSettings, mount: mountSettings, tab: false }, // opened from the header avatar
 };
 const TABS = Object.entries(ROUTES).filter(([, r]) => r.tab !== false);
+const PAGES = Object.keys(ROUTES).filter(k => !ROUTES[k].panel);
 const initial = () => (meta('profile').name || '').trim().charAt(0).toUpperCase() || '';
 const youBtn = (cls, label = '') => `<a href="#/you" data-route="you" class="${cls}" data-testid="you-btn" aria-label="You and settings" title="You and settings"><span class="avatar" aria-hidden="true">${esc(initial()) || I.you}</span>${label}</a>`;
+// Chat: tap the floating Ask button (phones and desktop); desktop also keeps it in the side rail. The bottom bar stays at five tabs.
+const chatBtn = (cls, label = '') => `<a href="#/chat" data-route="chat" data-act="chat-toggle" class="${cls}" data-testid="chat-btn" aria-label="Chat: ask about your data" title="Chat: ask about your data">${I.chat}${label}</a>`;
 const route = () => { const r = (location.hash.match(/^#\/(\w+)/) || [])[1]; return ROUTES[r] ? r : 'today'; };
 
 const app = document.getElementById('app');
@@ -59,15 +64,34 @@ function shell() {
     <nav class="side" aria-label="Main">
       <a class="brand" href="#/today">${mark(30)}<span>Steady</span></a>
       <div class="nav-items"><span class="liquid-ind" aria-hidden="true"><i></i></span>${TABS.map(([k, r]) => `<a href="#/${k}" data-route="${k}" class="nav-item">${r.icon}<span>${r.label}</span></a>`).join('')}</div>
-      <div class="side-foot">${youBtn('nav-item you-item', '<span>You</span>')}<div id="side-sync"></div></div>
+      <div class="side-foot">${chatBtn('nav-item chat-item', '<span>Chat</span>')}${youBtn('nav-item you-item', '<span>You</span>')}<div id="side-sync"></div></div>
     </nav>
     <header class="topbar"><a class="brand" href="#/today">${mark(26)}<span>Steady</span></a><div class="top-right"><div id="top-sync"></div>${youBtn('you-btn')}</div></header>
     <main id="view" class="view" tabindex="-1"></main>
-    ${micButton()}
+    ${askButton()}
     <nav class="tabbar" aria-label="Main"><span class="liquid-ind" aria-hidden="true"><i></i></span>${TABS.map(([k, r]) => `<a href="#/${k}" data-route="${k}" class="tab">${r.icon}<span>${r.label}</span></a>`).join('')}</nav>
   </div>`;
-  mountMic(app);
+  mountAsk(app, { onTap: openChat });
 }
+
+// ---------- chat: a panel over the app (phones: a full-height sheet; desktop: docked bottom-right) ----------
+// #/chat opens it over the page it was opened from (a deep link opens it over Today); Back, Close, Esc or a swipe down
+// close it. On desktop a side-rail tab keeps the panel open while the page underneath changes.
+let chatOpen = route() === 'chat';
+let chatFrom = null;                 // the page Chat was opened over, so closing returns there
+let navClick = false;                // the next hash change came from a nav link (desktop keeps Chat open)
+const wideMq = matchMedia('(min-width: 960px)');
+const pageRoute = () => { const r = route(); return r === 'chat' ? (chatFrom || 'today') : r; };
+function openChat() { if (chatOpen) return; if (route() !== 'chat') location.hash = '#/chat'; else { chatOpen = true; render(); } }
+function closeChat() {
+  if (!chatOpen) return;
+  if (route() === 'chat') { if (chatFrom && history.length > 1) history.back(); else location.hash = `#/${chatFrom || 'today'}`; return; }
+  chatOpen = false; render();
+}
+actions['chat-close'] = () => closeChat();
+actions['chat-toggle'] = () => (chatOpen ? closeChat() : openChat());
+window.__steadyCloseChat = closeChat;
+document.addEventListener('click', e => { if (e.target.closest?.('a[data-route]:not([data-route=chat])')) navClick = true; }, { capture: true });
 
 function syncChip(st, long) {
   if (!cloudReady()) return long ? `<a class="sync-chip off" href="#/you" data-testid="sync-chip">${I.sync}<span>Sync is off</span></a>` : '';
@@ -108,12 +132,13 @@ function render() {
   }
   let fresh = false;
   if (!document.getElementById('view')) { const boot = app.querySelector('.boot'), br = boot?.getBoundingClientRect(); shell(); fresh = true; motion.shellIn(boot, br); }
-  const r = route();
+  const r = pageRoute();
   const view = document.getElementById('view');
-  const order = Object.keys(ROUTES);
+  const order = PAGES;
   const dir = view.dataset.route ? Math.sign(order.indexOf(r) - order.indexOf(view.dataset.route)) : 0;
   const changed = view.dataset.route !== r;
   const before = changed ? null : motion.snapshot(view);
+  const prev = view.dataset.route;
   const scroll = window.scrollY;
   const swap = () => {
     // keep in-progress typing and focus across re-renders (read at swap time: a view transition runs this a frame later)
@@ -127,8 +152,8 @@ function render() {
       if (k.focus) { el.focus({ preventScroll: true }); try { el.setSelectionRange(k.s, k.e); } catch { /* type=search */ } }
     }
     ROUTES[r].mount?.(view);
-    document.querySelectorAll('[data-route]').forEach(a => { const on = a.dataset.route === r; a.classList.toggle('on', on); on ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current'); });
-    document.title = r === 'today' ? 'Steady' : `${ROUTES[r].label} · Steady`;
+    document.querySelectorAll('[data-route]').forEach(a => { const on = a.dataset.route === 'chat' ? chatOpen : a.dataset.route === r; a.classList.toggle('on', on); on ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current'); });
+    document.title = chatOpen ? 'Chat · Steady' : r === 'today' ? 'Steady' : `${ROUTES[r].label} · Steady`;
     window.scrollTo(0, changed ? 0 : scroll);
     motion.segs(view);
   };
@@ -140,7 +165,14 @@ function render() {
     if (fresh) { motion.rings(view, true); requestAnimationFrame(() => motion.indicators(false)); }
     else { if (before) motion.flip(before, view); motion.rings(view, false); motion.bars(view, false); motion.indicators(false); }
   }
+  syncChatPanel();
   paintSync();
+}
+function syncChatPanel() {
+  document.querySelectorAll('[data-route=chat]').forEach(a => { a.classList.toggle('on', chatOpen); chatOpen ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current'); a.setAttribute('aria-expanded', String(chatOpen)); });
+  setMicTarget(chatOpen ? dictateInto : null);                 // with Chat open the mic dictates into its composer
+  setChatOpen(chatOpen); paintChat();
+  document.title = chatOpen ? 'Chat · Steady' : pageRoute() === 'today' ? 'Steady' : `${ROUTES[pageRoute()].label} · Steady`;
 }
 const scheduleRender = (() => { let q = false; const run = () => {
   const wait = motion.heldFor();
@@ -162,11 +194,20 @@ document.addEventListener('keydown', e => {
     e.preventDefault(); if (route() !== 'today') location.hash = '#/today'; setTimeout(() => document.getElementById('qa')?.focus(), 50);
   }
   // "v": the voice agent (same single mic as the floating button)
-  if (e.key === 'v' && !e.metaKey && !e.ctrlKey && !e.altKey && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName) && !sheetOpen() && document.getElementById('mic-fab')) {
+  if (e.key === 'v' && !e.metaKey && !e.ctrlKey && !e.altKey && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName) && !sheetOpen() && document.getElementById('ask-fab')) {
     e.preventDefault(); openVoice();
   }
+  // Esc leaves Chat (sheets close first: ui.js handles Esc while one is open)
+  if (e.key === 'Escape' && chatOpen && !sheetOpen() && !e.defaultPrevented && chatEscape()) return;
+  if (e.key === 'Escape' && chatOpen && !sheetOpen() && !e.defaultPrevented) { const ta = document.getElementById('chat-input'); if (!ta?.value.trim() || document.activeElement !== ta) closeChat(); }
 });
-window.addEventListener('hashchange', () => render());
+window.addEventListener('hashchange', () => {
+  const isChat = route() === 'chat';
+  if (isChat) { if (!chatOpen) chatFrom = document.getElementById('view')?.dataset.route || null; chatOpen = true; }
+  else if (chatOpen) chatOpen = wideMq.matches && navClick;    // Back (or a link) closes it; desktop tabs keep it open
+  navClick = false;
+  render();
+});
 // soft keyboard on phones: while a text field has focus AND the visual viewport has shrunk (the keyboard is really up),
 // the tab bar and mic step aside so they never sit on the field (CSS: html.kb-open). Focus alone is not enough:
 // a programmatic focus on Android doesn't raise the keyboard.
@@ -179,8 +220,14 @@ const kbCheck = () => {
   if (!isText(document.activeElement) || h > fullH) fullH = h; // no field focused: whatever we see is the full height
   const open = coarse.matches && isText(document.activeElement) && h < fullH - 140;
   document.documentElement.classList.toggle('kb-open', open);
+  // how much of the layout viewport the keyboard covers (0 where the browser already resizes the page for it), so the
+  // Chat composer row can sit right on top of the keyboard
+  const kb = open && vv ? Math.max(0, Math.round(innerHeight - vv.height - vv.offsetTop)) : 0;
+  document.documentElement.style.setProperty('--kb', `${kb}px`);
+  document.documentElement.style.setProperty('--vvt', `${open && vv ? Math.max(0, Math.round(vv.offsetTop)) : 0}px`);   // iOS pans the page under the keyboard
 };
 vv?.addEventListener('resize', kbCheck);
+vv?.addEventListener('scroll', kbCheck);
 addEventListener('orientationchange', () => { fullH = 0; setTimeout(() => { fullH = vv ? vv.height : innerHeight; kbCheck(); }, 400); });
 document.addEventListener('focusin', () => setTimeout(kbCheck, 350));
 document.addEventListener('focusout', () => setTimeout(kbCheck, 60));

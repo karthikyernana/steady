@@ -1,5 +1,5 @@
 // Steady service worker: offline app shell (network-first, cache fallback) + Web Push + notification clicks.
-const VERSION = 'steady-v1.4.2-r1';
+const VERSION = 'steady-v1.5.0-r1';
 const SHELL = [
   './',
   './index.html',
@@ -8,6 +8,7 @@ const SHELL = [
   './css/styles.css',
   './js/app.js',
   './js/core/agent.js',
+  './js/core/chat-ui.js',
   './js/core/engine.js',
   './js/core/merge.js',
   './js/core/money.js',
@@ -20,10 +21,12 @@ const SHELL = [
   './js/core/voice.js',
   './js/data/agent.js',
   './js/data/backup.js',
+  './js/data/chat.js',
   './js/data/insights.js',
   './js/data/store.js',
   './js/data/sync.js',
   './js/platform/notify.js',
+  './js/ui/cards.js',
   './js/ui/charts.js',
   './js/ui/daystrip.js',
   './js/ui/guide.js',
@@ -31,6 +34,8 @@ const SHELL = [
   './js/ui/motion.js',
   './js/ui/ui.js',
   './js/ui/voice.js',
+  './js/ui/views/chat.js',
+  './js/ui/press.js',
   './js/ui/views/goals.js',
   './js/ui/views/insights.js',
   './js/ui/views/money.js',

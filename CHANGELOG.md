@@ -3,6 +3,59 @@
 All notable changes to Steady. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 The data contract has its own version (`schemaVersion`, see docs/DATA_MODEL.md); an app release that changes it must ship a migration.
 
+## [1.5.0] - 2026-10-21
+
+### Fixed
+- Ask press-and-hold: a short hold no longer opens the voice sheet and closes it at once (the click Chrome sends after a
+  long press landed on the sheet's backdrop). The backdrop now closes only for a tap that starts on it.
+
+### Added
+- Chat (agent layer, phase 1): ask about your own tasks, goals, money and thoughts from a button beside the You avatar
+  (the bottom bar stays at five tabs). One agent answers with read-only tools and replies with a few words plus cards
+  (Stat, Line, Bar, Donut, Heatmap, ProgressList, TaskList, Timeline, Table, Note, Callout) drawn natively on web and
+  Android. Cards store queries, not numbers: figures are computed from your rows on the server every time a chat is shown.
+  History, New chat, delete; the floating mic dictates into the composer; calm offline / signed-out / not-set-up states.
+- `POST /api/agent/chat`, `GET /api/agent/chats`, `GET|DELETE /api/agent/chats/:id`; model router Groq `gpt-oss-120b` →
+  Gemini Flash-Lite → Cloudflare Workers AI (each optional by env); per-user daily cap (`AGENT_DAILY_CAP`, default 60);
+  short first-question cache. Migration `0009_agent_chat.sql` (RLS). docs/AGENT.md.
+
+### Changed
+- One-handed reach (web + Android): the floating mic is now **Ask**. Tap it to open Chat; press and hold it for the voice
+  agent exactly as before (records while held, release → transcript → drafts → Accept; a pause never ends a held turn).
+  A labelled pill (speech bubble + "Ask") with a hold ring, plus a quiet "Tap to ask · Hold to talk" note on the first
+  runs. The chat button beside the avatar is gone; K / You stays top right; the bottom bar keeps its five tabs. Desktop
+  keeps Chat in the side rail and Ask bottom-right.
+- Chat rises from the bottom as a full-height sheet with every control in the thumb zone: History · New · Close in a row
+  just above the composer, the mic inside the composer (dictation into the box only, no spoken replies), History as a
+  bottom sheet. The header holds only the title; close with Close, by dragging the header down, Back, or Esc. The
+  composer row rides on top of the soft keyboard (web: `--kb` from the visual viewport; Android: IME insets).
+- Chat UX + robustness pass (web + Android):
+  - Desktop web: Chat is a messenger-style **panel docked bottom-right** (440 px × up to 80vh, resizable from its
+    top-left corner, size kept on the device; double-click the grip to reset) over whatever page is open, opened by Ask
+    or the side-rail Chat item (which toggles it); side-rail tabs keep it open; History opens inside the panel; Esc
+    closes History first, then the panel. Phones keep the full-height sheet (now modal: the app underneath is inert).
+  - The thread is **bottom-anchored** on every size: a short chat sits right above the composer, newest at the bottom; it
+    follows new messages unless you scrolled up, then a **Latest** pill takes you down. Each chat keeps its scroll
+    position and its half-typed draft when you switch.
+  - **Switch chats while an answer is pending**: History and New stay live, the composer works in another chat at the
+    same time, each question keeps running for ITS chat and its answer lands there (History shows "Answering…", then a
+    dot; a toast says the answer is ready). Android: one coroutine per question on the app scope, keyed by its chat.
+  - **Calm errors**: raw provider text (e.g. `[groq 429: …]`) never shows; anything in `[ … ]` is stripped and provider /
+    HTTP-looking text becomes "Busy right now, try again in a moment." with Try again (detail in the console / log only).
+    Web `js/core/chat-ui.js`, Android `ChatErrors`.
+  - History: last activity first, a new chat shows (titled by its question) while it answers, **rename** (device-local
+    until the server has `PATCH /api/agent/chats/:id`), delete handles an already-deleted chat calmly.
+  - Empty state suggests chart-worthy asks ("Spending by category this month", "How am I doing on my goals?", "What's due
+    this week?", "What did I write about…" which fills the box for you to finish).
+  - Fixes: composer focus ring drawn twice (inner box) on every style; papercut drew a well inside the composer; sticky
+    hover highlight on touch in History; the panel no longer re-renders the composer on every data change (typing and
+    caret survive); desktop Chat page (history column in the middle of the screen) removed.
+  - Cards: a Note/Callout/title keeps the user's `#tags` (only markdown heading/quote marks are stripped).
+- Web: `V` still opens a hands-free voice turn (the QA scripts use it where they tapped the mic). Esc on an open sheet
+  closes only that sheet.
+
+### Fixed
+- Android: the notification Done/Snooze receiver no longer throws when `goAsync()` is unavailable (direct calls in tests).
 ## [1.4.2] - 2026-10-20
 
 ### Fixed

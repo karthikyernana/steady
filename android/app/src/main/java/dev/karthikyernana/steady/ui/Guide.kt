@@ -29,7 +29,7 @@ import kotlinx.coroutines.launch
 private data class GuidePage(val icon: ImageVector, val title: String, val line: String, val type: String, val becomes: List<String>)
 
 private val PAGES = listOf(
-    GuidePage(Icons.Rounded.Mic, "Just say it", "Tap the mic and talk, in English or Telugu. Steady turns it into tasks, goals or money entries for you to accept.", "\"Remind me to call amma in 10 minutes\"", listOf("Task", "Today, in 10 min", "Reminder on")),
+    GuidePage(AskIcon, "Just say it", "Hold Ask and talk, in English or Telugu. Steady turns it into tasks, goals or money entries for you to accept. Tap Ask to chat about your data.", "\"Remind me to call amma in 10 minutes\"", listOf("Task", "Today, in 10 min", "Reminder on")),
     GuidePage(Icons.Outlined.Schedule, "Today", "Type tasks the way you'd text a friend. Time, length and day are picked up for you.", "gym 7pm 45m", listOf("Gym", "7:00 PM", "45 min")),
     GuidePage(Icons.Outlined.Flag, "Goals", "A big goal becomes one small milestone a week, so you always know the next step.", "Crack placements by March", listOf("Week 1: resume", "Week 2: mocks", "…")),
     GuidePage(Icons.Outlined.AccountBalanceWallet, "Money", "Log spending in a few words. Steady sorts the category and shows where it went.", "250 lunch swiggy", listOf("₹250", "Food", "Swiggy")),

@@ -26,6 +26,10 @@
 | `SARVAM_STT_MODEL`, `SARVAM_STT_MODE`, `SARVAM_STT_LANGUAGE` (optional) | you | Defaults `saaras:v3`, `codemix`, `unknown` (auto-detect). |
 | `SARVAM_LLM_MODEL`, `SARVAM_JSON_MODE` (optional) | you | Defaults `sarvam-105b`, `object` (JSON mode + shape in prompt; measured 2-4 s). `schema` = strict json_schema (slower). `AGENT_SARVAM_LLM=off` disables the Sarvam LLM fallback. |
 | `AGENT_DAILY_LIMIT` (optional) | you | Per-user daily cap for transcriptions and plans (default 200 each). |
+| `GROQ_API_KEY` | you | Chat agent's primary model (Groq `openai/gpt-oss-120b`, free tier). Optional: `GROQ_MODEL`, `GROQ_REASONING` (`low`), `GROQ_BASE_URL`. See docs/AGENT.md. |
+| `AGENT_GEMINI_MODEL` (optional) | you | Chat's Gemini fallback model on Gemini's OpenAI layer (default `gemini-flash-lite-latest`; uses the existing `GEMINI_API_KEY`). `AGENT_CHAT_GEMINI=off` keeps Gemini for voice only. |
+| `CF_ACCOUNT_ID`, `CF_API_TOKEN` (optional) | you | Chat's third fallback (Cloudflare Workers AI). Optional `CF_MODEL` (default `@cf/meta/llama-3.3-70b-instruct-fp8-fast`), `CF_BASE_URL`. |
+| `AGENT_DAILY_CAP` (optional) | you | Chat turns per user per day (default 60). `AGENT_CHAT_CACHE_MS` (600000) first-question cache; `AGENT_CHAT_TIMEOUT_MS` (25000) per model call. With no chat provider set, Chat says it isn't set up and nothing else changes. |
 | `AGENT_GLOBAL_DAILY_LIMIT` (optional) | you | All-users daily ceiling per kind (default 3000), so open sign-ups cannot multiply the AI bill. |
 | `QSTASH_TOKEN`, `QSTASH_URL`, `PUBLIC_URL` (optional) | you | Exact-minute reminder wake-ups via Upstash QStash; needs `CRON_SECRET` too. See docs/NOTIFICATIONS.md. |
 | `REMINDER_EARLY_MS` (optional) | you | How early a push may be sent (default 150000, or 20000 when QStash is on). |
@@ -47,6 +51,13 @@ Retired in v1.2 (removed): `SETUP_CODE`, `ALLOWED_EMAIL`, `OWNER_EMAILS` (no lon
 3. Migration `0006_money_agent.sql` runs on deploy (records `coll` check + `agent_memory` + `agent_usage`, all RLS). `0007_agent_usage_total.sql` adds the all-users counter (no user data, no RLS).
 4. Data contract moves to schemaVersion 2: open the new version on every device once; a 1.2 device shows "update this device" until it reloads.
 5. Bump `package.json` + `APP_VERSION` to 1.3.0 and date the CHANGELOG entry at release time.
+
+## Releasing Chat (agent layer phase 1) — checklist
+
+1. Vercel env (Production + Preview): `GROQ_API_KEY` (required for chat to be on unless Gemini/Cloudflare are set). Optional:
+   `CF_ACCOUNT_ID` + `CF_API_TOKEN`, `AGENT_GEMINI_MODEL`, `AGENT_DAILY_CAP`.
+2. Migration `0009_agent_chat.sql` runs on deploy (chats + messages with RLS; `chat` added to the usage-kind checks).
+3. Verify `/api/config` shows `chat: { on: true, providers: [...] }`, then ask one question on phone and desktop.
 
 ## Common tasks
 

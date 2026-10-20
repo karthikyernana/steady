@@ -23,7 +23,7 @@ with sync_playwright() as p:
         return state()
     ok = 0; detail = []
     for i in range(6):
-        a.click('#mic-fab'); a.wait_for_selector('[data-testid=voice-sheet][data-state=listening]', timeout=5000)
+        (a.evaluate("document.activeElement?.blur()"), a.keyboard.press('v')); a.wait_for_selector('[data-testid=voice-sheet][data-state=listening]', timeout=5000)
         a.wait_for_timeout(900)
         if state() == 'listening': a.click('[data-testid=vx-stop]')
         s = wait_end(); detail.append(s)
@@ -32,15 +32,15 @@ with sync_playwright() as p:
         a.keyboard.press('Escape'); a.wait_for_timeout(60)
     rec('6 rapid turns all transcribe', ok == 6, ' '.join(map(str, detail)))
     for i in range(6):
-        a.click('#mic-fab'); a.wait_for_timeout(80); a.keyboard.press('Escape'); a.wait_for_timeout(40)
+        (a.evaluate("document.activeElement?.blur()"), a.keyboard.press('v')); a.wait_for_timeout(80); a.keyboard.press('Escape'); a.wait_for_timeout(40)
     a.wait_for_timeout(400)
-    a.click('#mic-fab'); a.wait_for_selector('[data-testid=voice-sheet][data-state=listening]', timeout=5000); a.wait_for_timeout(900)
+    (a.evaluate("document.activeElement?.blur()"), a.keyboard.press('v')); a.wait_for_selector('[data-testid=voice-sheet][data-state=listening]', timeout=5000); a.wait_for_timeout(900)
     if state() == 'listening': a.click('[data-testid=vx-stop]')
     s = wait_end(); rec('after open/close chaos a real turn still works', s == 'review', s or '')
     a.keyboard.press('Escape'); a.wait_for_timeout(300)
     # long speech, segmented
-    a.add_init_script("window.__steadyVoiceTune = { seg: 3000 }"); a.reload(); a.wait_for_selector('#mic-fab'); a.wait_for_timeout(500)
-    box = a.locator('#mic-fab').bounding_box(); a.mouse.move(box['x'] + 20, box['y'] + 20); a.mouse.down()
+    a.add_init_script("window.__steadyVoiceTune = { seg: 3000 }"); a.reload(); a.wait_for_selector('#ask-fab'); a.wait_for_timeout(500)
+    box = a.locator('#ask-fab').bounding_box(); a.mouse.move(box['x'] + 20, box['y'] + 20); a.mouse.down()
     a.wait_for_timeout(8200); a.mouse.up()
     s = wait_end(20)
     last = a.evaluate("JSON.stringify(window.__steadyVoice.last)")

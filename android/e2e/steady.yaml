@@ -69,6 +69,13 @@ appId: dev.karthikyernana.steady.debug
 - tapOn: { id: "tab-insights" }
 - assertVisible: "What I've learned about you"
 - takeScreenshot: shots/e2e-5-insights
+# Ask: tap opens Chat from the bottom (controls in the thumb zone), Close drops it back
+- tapOn: { id: "ask-fab" }
+- extendedWaitUntil: { visible: { id: "chat-composer" }, timeout: 10000 }
+- assertVisible: { id: "chat-close" }
+- takeScreenshot: shots/e2e-5b-chat
+- tapOn: { id: "chat-close" }
+- assertVisible: { id: "ask-fab" }
 - tapOn: { id: "you-btn" }
 - assertVisible: "Sync across devices"
 - tapOn: "Sync now"

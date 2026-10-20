@@ -8,7 +8,7 @@ AUD = open(os.path.join(HERE, 'audit.js')).read()
 OUT = os.path.normpath(os.path.join(ROOT, 'qa-shots', 'styles-v13')); os.makedirs(OUT, exist_ok=True)
 STYLES = sys.argv[2].split(',') if len(sys.argv) > 2 else ['liquid', 'paper', 'grid', 'papercut', 'midnight']
 report = {}
-CHK = '''() => { const out = [], bar = document.querySelector('.tabbar'), mic = document.getElementById('mic-fab'), you = document.querySelector('[data-testid=you-btn]');
+CHK = '''() => { const out = [], bar = document.querySelector('.tabbar'), mic = document.getElementById('ask-fab'), you = document.querySelector('[data-testid=you-btn]');
   const vis = el => el && el.getBoundingClientRect().width > 0 && getComputedStyle(el).visibility !== 'hidden';
   if (!vis(bar)) out.push('no tab bar'); else { const n = bar.querySelectorAll('.tab').length; if (n !== 5) out.push('tabs ' + n);
     for (const t of bar.querySelectorAll('.tab')) { const r = t.getBoundingClientRect(); if (r.width < 44) out.push('narrow tab ' + r.width); } }
@@ -27,7 +27,7 @@ with sync_playwright() as p:
             for r in ['today', 'money']:
                 pg.evaluate(f"location.hash='#/{r}'"); pg.wait_for_timeout(700); pg.evaluate('window.scrollTo(0,0)')
                 k = f'{s}-{scheme}-{r}'; report[k] = pg.evaluate(AUD) + pg.evaluate(CHK); pg.screenshot(path=f'{OUT}/{s}_{r}_{scheme}.png')
-            pg.locator('#mic-fab').click(); pg.wait_for_selector('#vx-text')
+            (pg.evaluate("document.activeElement?.blur()"), pg.keyboard.press('v')); pg.wait_for_selector('#vx-text')
             pg.fill('#vx-text', 'spent 250 on lunch at swiggy and remind me to call amma tomorrow at 6pm'); pg.click('[data-testid=vx-understand]'); pg.wait_for_selector('.dcard'); pg.wait_for_timeout(600)
             report[f'{s}-{scheme}-voice'] = pg.evaluate(AUD); pg.screenshot(path=f'{OUT}/{s}_voice_{scheme}.png')
             pg.keyboard.press('Escape'); pg.wait_for_timeout(400)

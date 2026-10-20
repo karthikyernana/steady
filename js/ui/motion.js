@@ -149,13 +149,22 @@ export function stagger(els, dir = 0, { base = 0, step = 42, max = 9 } = {}) {
 }
 // Route change: a single composited cross-slide of the page via the View Transitions API (snapshots, GPU only).
 // Top bar, tab bar and sidebar are captured separately so they stay perfectly still.
-export function routeSwap(swap, dir, after) {
+export function routeSwap(swap, dir, after, sheet = null) {
   // Route change: swap instantly, then one composited slide of the page content (transform + opacity, never from 0).
   // Fixed bars (top bar, tab bar) are never snapshotted or moved, so they stay rock-still on every device.
+  // sheet 'up' (opening Chat): its parts rise from the bottom like a sheet, the bottom dock last; 'down' (leaving it): the
+  // page underneath settles back in. The fixed dock is animated on its own, never through a transformed ancestor.
   swap(); after?.();
   const inner = document.querySelector('.view-inner');
   if (calm() || !inner) return;
-  inner.animate([{ transform: `translate3d(${dir * 18}px, 0, 0)`, opacity: 0.5 }, { transform: 'none', opacity: 1 }], { duration: 260, easing: 'cubic-bezier(.2,.8,.2,1)' });
+  const ease = 'cubic-bezier(.2,.8,.2,1)';
+  if (sheet === 'up') {
+    inner.querySelectorAll('.chat-head, .chat-layout').forEach(el => el.animate([{ transform: 'translate3d(0, 56px, 0)', opacity: 0.35 }, { transform: 'none', opacity: 1 }], { duration: 320, easing: ease }));
+    inner.querySelector('.chat-dock')?.animate([{ transform: 'translate3d(0, 110%, 0)' }, { transform: 'none' }], { duration: 340, easing: ease });
+    return;
+  }
+  if (sheet === 'down') { inner.animate([{ transform: 'scale(.985)', opacity: 0.6 }, { transform: 'none', opacity: 1 }], { duration: 240, easing: ease }); return; }
+  inner.animate([{ transform: `translate3d(${dir * 18}px, 0, 0)`, opacity: 0.5 }, { transform: 'none', opacity: 1 }], { duration: 260, easing: ease });
 }
 // ---------- shell intro ----------
 export function shellIn(bootEl, r) {

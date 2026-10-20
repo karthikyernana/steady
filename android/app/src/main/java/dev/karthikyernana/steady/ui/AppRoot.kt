@@ -18,8 +18,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material.icons.rounded.Mic
+import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -82,12 +85,43 @@ private fun Main(activity: MainActivity, snackbar: SnackbarHostState) {
     val c = LocalCtx.current
     var tab by rememberSaveable { mutableStateOf(Tab.Today) }
     var you by rememberSaveable { mutableStateOf(false) }
+    var chat by rememberSaveable { mutableStateOf(false) }
     var voice by remember { mutableStateOf(false) }
+    var hold by remember { mutableStateOf<HoldState?>(null) }       // set while the voice sheet was opened by holding Ask
+    val ctxA = LocalContext.current
+    val scopeA = rememberCoroutineScope()
+    // Chat state lives here so a conversation survives closing it; the composer mic dictates into it
+    // (each question runs on this app-level scope, keyed by its chat, so switching chats never cancels or misroutes one)
+    val chatState = remember { ChatState(dev.karthikyernana.steady.agent.ChatApi(c.app.api), dev.karthikyernana.steady.agent.Agent(c.app.store, c.app.api),
+        dev.karthikyernana.steady.agent.Recorder(ctxA), scopeA,
+        loadTitles = { runCatching { dev.karthikyernana.steady.data.Store.json.parseToJsonElement(c.app.store.local("chatTitles") ?: "{}").jsonObject.mapValues { it.value.jsonPrimitive.content } }.getOrDefault(emptyMap()) },
+        saveTitles = { m -> c.app.store.setLocal("chatTitles", kotlinx.serialization.json.JsonObject(m.mapValues { kotlinx.serialization.json.JsonPrimitive(it.value) }).toString()) }) { c.toast(it, null) } }
+    LaunchedEffect(chat) { if (!chat) { chatState.stopMic(); chatState.hist = false } }
+    // first runs: a quiet "Tap to ask · Hold to talk" note above Ask (until the first hold, at most 3 launches, 7 s each)
+    var hint by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        val n = c.app.store.local("askHintN")?.toIntOrNull() ?: 0
+        if (c.app.store.local("askHeld") == null && n < 3) {
+            kotlinx.coroutines.delay(1200); c.app.store.setLocal("askHintN", "${n + 1}"); hint = true
+            kotlinx.coroutines.delay(7000); hint = false
+        }
+    }
+    val openChat = { you = false; chat = true; hint = false }
+    val holdAsk = {
+        hint = false; c.app.store.setLocal("askHeld", "1")
+        if (!voice) { hold = HoldState().also { it.down = true; it.openedAt = System.currentTimeMillis() }; voice = true }
+    }
+    val releaseAsk = { ms: Long, cancelled: Boolean -> hold?.let { h -> h.down = false; h.finish = AskPress.outcome(ms, cancelled) == "stop" }; Unit }
+    val micPerm = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok -> if (ok) chatState.toggleMic(c.app.sync.signedIn) else c.toast("Microphone access is off for Steady. Typing works.", null) }
+    val chatMic = {
+        if (!c.app.sync.signedIn || chatState.listening || androidx.core.content.ContextCompat.checkSelfPermission(ctxA, Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED) chatState.toggleMic(c.app.sync.signedIn)
+        else micPerm.launch(Manifest.permission.RECORD_AUDIO)
+    }
     var guide by remember { mutableStateOf(c.app.store.local("guideSeen") == null) }
 
     // notification taps
     LaunchedEffect(activity.openRequest) {
-        if (activity.openRequest != null) { you = false; tab = Tab.Today }
+        if (activity.openRequest != null) { you = false; chat = false; tab = Tab.Today }
         activity.openRequest = null
     }
     // Android 13+: ask for notifications once, the first time the main screen shows
@@ -95,7 +129,7 @@ private fun Main(activity: MainActivity, snackbar: SnackbarHostState) {
     LaunchedEffect(Unit) {
         if (Build.VERSION.SDK_INT >= 33 && c.app.store.local("notifAsked") == null) { c.app.store.setLocal("notifAsked", "1"); notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) }
     }
-    BackHandler(enabled = you || tab != Tab.Today) { if (you) you = false else tab = Tab.Today }
+    BackHandler(enabled = you || chat || tab != Tab.Today) { if (you) you = false else if (chat) chat = false else tab = Tab.Today }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
         // a phone on its side: the bottom bar would eat half the height, so the tabs move to a rail on the left
@@ -103,7 +137,7 @@ private fun Main(activity: MainActivity, snackbar: SnackbarHostState) {
         Ambient()
         // landscape: keep clear of the camera cutout and the side navigation bar
         Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.displayCutout.union(WindowInsets.navigationBars).only(WindowInsetsSides.Horizontal)).padding(start = if (rail) 84.dp else 0.dp)) {
-            TopBar(onYou = { you = !you }, youOpen = you)
+            TopBar(onYou = { chat = false; you = !you }, youOpen = you)
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 AnimatedContent(targetState = if (you) "you" else tab.name, transitionSpec = {
                     // like the web's view transitions: a short directional glide + fade, springy, never a hard cut
@@ -138,24 +172,34 @@ private fun Main(activity: MainActivity, snackbar: SnackbarHostState) {
         // floating glass tab bar + the mic, like the web app (the mic is never inside the bar)
         val imeOpen = WindowInsets.ime.getBottom(androidx.compose.ui.platform.LocalDensity.current) > 0
         if (rail) {
-            SideRail(if (you) null else tab, Modifier.align(Alignment.CenterStart).windowInsetsPadding(WindowInsets.displayCutout.union(WindowInsets.navigationBars).only(WindowInsetsSides.Start)).padding(start = 10.dp)) { you = false; tab = it }
-            if (!imeOpen) Box(Modifier.align(Alignment.BottomEnd).navigationBarsPadding().padding(16.dp)) { MicFab { voice = true } }
-        } else if (!imeOpen) {
-            Column(Modifier.align(Alignment.BottomCenter).widthIn(max = 600.dp).fillMaxWidth().navigationBarsPadding().padding(horizontal = 10.dp, vertical = 8.dp), horizontalAlignment = Alignment.End) {
-                MicFab { voice = true }
-                Spacer(Modifier.height(12.dp))
-                BottomBar(if (you) null else tab) { you = false; tab = it }
+            SideRail(if (you) null else tab, Modifier.align(Alignment.CenterStart).windowInsetsPadding(WindowInsets.displayCutout.union(WindowInsets.navigationBars).only(WindowInsetsSides.Start)).padding(start = 10.dp)) { you = false; chat = false; tab = it }
+            if (!imeOpen && !chat) Column(Modifier.align(Alignment.BottomEnd).navigationBarsPadding().padding(12.dp), horizontalAlignment = Alignment.End) {
+                androidx.compose.animation.AnimatedVisibility(hint, enter = fadeIn(), exit = fadeOut()) { AskHint(Modifier.padding(end = 6.dp, bottom = 6.dp)) }
+                AskFab(openChat, holdAsk, releaseAsk)
             }
+        } else {
+            if (!imeOpen && !chat) Column(Modifier.align(Alignment.BottomCenter).widthIn(max = 600.dp).fillMaxWidth().navigationBarsPadding().padding(horizontal = 10.dp, vertical = 8.dp), horizontalAlignment = Alignment.End) {
+                androidx.compose.animation.AnimatedVisibility(hint, enter = fadeIn(), exit = fadeOut()) { AskHint(Modifier.padding(end = 6.dp, bottom = 4.dp)) }
+                // Ask: tap = Chat, hold = the voice agent (the bottom bar keeps exactly five tabs)
+                AskFab(openChat, holdAsk, releaseAsk)
+                Spacer(Modifier.height(6.dp))
+                BottomBar(if (you) null else tab) { you = false; chat = false; tab = it }
+            }
+        }
+        // Chat: a full-height sheet that rises from the bottom over everything; all its controls sit in the thumb zone
+        androidx.compose.animation.AnimatedVisibility(chat && !you, enter = androidx.compose.animation.slideInVertically(androidx.compose.animation.core.spring(dampingRatio = 0.9f, stiffness = 420f)) { it } + fadeIn(),
+            exit = androidx.compose.animation.slideOutVertically(androidx.compose.animation.core.tween(220)) { it } + fadeOut(androidx.compose.animation.core.tween(200))) {
+            ChatSheet(chatState, c.app.sync.signedIn && !chatState.off, onClose = { chat = false }, onMic = chatMic)
         }
         androidx.compose.animation.AnimatedVisibility(guide, enter = androidx.compose.animation.fadeIn(), exit = androidx.compose.animation.fadeOut()) {
             BackHandler { c.app.store.setLocal("guideSeen", "1"); guide = false }
             Guide { c.app.store.setLocal("guideSeen", "1"); guide = false }
         }
-        SnackbarHost(snackbar, Modifier.align(Alignment.BottomStart).navigationBarsPadding().padding(start = if (rail) 96.dp else 8.dp, end = 82.dp, bottom = if (rail) 16.dp else 88.dp)) {
+        SnackbarHost(snackbar, Modifier.align(Alignment.BottomStart).navigationBarsPadding().imePadding().padding(start = if (rail) 96.dp else 8.dp, end = if (chat && !you) 8.dp else 120.dp, bottom = if (chat && !you) 136.dp else if (rail) 16.dp else 88.dp)) {
             Snackbar(it, containerColor = P.ink, contentColor = P.ground, actionColor = P.accentLine, shape = RoundedCornerShape(999.dp))
         }
     }
-    if (voice) VoiceSheet(onClose = { voice = false })
+    if (voice) VoiceSheet(onClose = { voice = false; hold = null }, hold = hold)
 }
 
 @Composable
@@ -171,6 +215,7 @@ private fun TopBar(onYou: () -> Unit, youOpen: Boolean) {
             Box(Modifier.size(8.dp).clip(CircleShape).background(if (st.state == dev.karthikyernana.steady.sync.Sync.State.OFFLINE) P.warn else P.danger).testTag("sync-status"))
             Spacer(Modifier.width(10.dp))
         }
+        // K / You stays top right (rare settings). Chat opens from the Ask button at the bottom.
         val name = c.snap.profile.str("name") ?: "K"
         Box(Modifier.size(40.dp).shadow(if (P.dark) 0.dp else 6.dp, CircleShape).clip(CircleShape).background(if (youOpen) P.ink else P.surface).border(1.dp, P.line, CircleShape).clickable(onClick = onYou)
             .semantics { contentDescription = "You and settings" }.testTag("you-btn"), contentAlignment = Alignment.Center) {
@@ -224,14 +269,5 @@ private fun SideRail(tab: Tab?, modifier: Modifier, onTab: (Tab) -> Unit) {
                 Text(t.label, style = Type.label.copy(fontSize = 10.sp), color = tint, maxLines = 1)
             }
         }
-    }
-}
-
-@Composable
-private fun MicFab(onClick: () -> Unit) {
-    val src = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
-    FloatingActionButton(onClick = onClick, containerColor = Color(0xFF1C1B18), contentColor = Color(0xFFFBF8F1), shape = CircleShape, interactionSource = src,
-        modifier = Modifier.padding(end = 6.dp).pressScale(src, 0.9f).size(58.dp).semantics { contentDescription = "Speak to Steady" }.testTag("mic-fab")) {
-        Icon(Icons.Rounded.Mic, contentDescription = null)
     }
 }

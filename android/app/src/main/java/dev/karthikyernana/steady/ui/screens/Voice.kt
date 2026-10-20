@@ -47,7 +47,7 @@ import dev.karthikyernana.steady.data.bool
  * is written until you accept a card. Telugu, English, or both mixed.
  */
 @Composable
-fun VoiceSheet(onClose: () -> Unit) {
+fun VoiceSheet(onClose: () -> Unit, hold: dev.karthikyernana.steady.ui.HoldState? = null) {
     val c = LocalCtx.current
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -111,7 +111,7 @@ fun VoiceSheet(onClose: () -> Unit) {
                     val quietMs = if (quietSince == 0L) 0L else now - quietSince
                     when {
                         recorder.turnMs >= 120_000 -> { stopRec(); break }
-                        spoke && quietMs >= 1_800 -> { stopRec(); break }
+                        spoke && quietMs >= 1_800 && hold?.down != true -> { stopRec(); break }      // holding Ask: a pause never ends it
                         recorder.pieceMs >= 28_000 || (recorder.pieceMs >= 24_000 && quietMs >= 300) -> recorder.rotate()
                     }
                     delay(80)
@@ -120,6 +120,14 @@ fun VoiceSheet(onClose: () -> Unit) {
         } catch (e: Exception) { err = "Couldn't start the microphone."; phase = "idle" }
     }
     val micPerm = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok -> if (ok) startRec() else err = "Steady needs the microphone to hear you. You can type instead." }
+    // opened by holding Ask: start listening at once (signed out it's the typing sheet, as before); letting go finishes
+    LaunchedEffect(hold) {
+        if (hold != null && signedIn && phase == "idle") {
+            if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) startRec()
+            else { hold.down = false; micPerm.launch(Manifest.permission.RECORD_AUDIO) }
+        }
+    }
+    LaunchedEffect(hold?.finish) { if (hold?.finish == true && phase == "rec") stopRec() }
 
     SSheet(::finish, "Tell Steady") {
         when (phase) {

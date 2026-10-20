@@ -1,11 +1,12 @@
-// The one mic. Tap to talk (tap again or pause to finish), or hold to talk (release to finish). Typing works too.
+// The voice agent, behind the Ask button: press and hold to talk (release to finish; a pause or Done ends a hands-free turn).
+// Tap Ask opens Chat instead (js/app.js). Typing works too.
 // Flow: record → /api/agent/transcribe (Sarvam) → editable transcript → /api/agent/plan (Gemini/Sarvam/rules)
 //       → draft cards showing exactly what will change → Accept (per card or all) → local store → sync.
 // Nothing is written before Accept. The whole session can be undone from the toast afterwards.
 import { I } from './icons.js';
 import { esc, fmtTime, fmtDateKey, todayKey } from '../core/util.js';
 import { openSheet, toast, sheetOpen } from './ui.js';
-import { all, get, local } from '../data/store.js';
+import { all, get, local, setLocal } from '../data/store.js';
 import { cloudReady, serverConfig } from '../data/sync.js';
 import { transcribeAudio, planText, applyDraft, undoChanges, sendLearning } from '../data/agent.js';
 import { missing, TYPE_LABEL } from '../core/agent.js';
@@ -13,6 +14,7 @@ import { fmtINR, DEFAULT_CATEGORIES, INCOME_CATEGORIES, canonicalCategory } from
 import { knownCategories } from './views/money.js';
 import { reconcileNtfy, rearmLocal } from '../platform/notify.js';
 import * as motion from './motion.js';
+import { HOLD_MS, releaseOutcome } from './press.js';
 
 const TUNE = window.__steadyVoiceTune || {};   // test hook (shorter segments in e2e); unset in normal use
 const MAX_MS = TUNE.max || 120_000, SEG_MS = TUNE.seg || 25_000, SILENCE_MS = TUNE.silence || 3200, MIN_SPEECH_MS = 450;
@@ -24,26 +26,47 @@ const voiceSupported = () => !!(navigator.mediaDevices?.getUserMedia && window.M
 export const voiceReady = () => voiceSupported() && cloudReady() && !!cfg.agent?.voice && navigator.onLine;
 
 // ---------------------------------------------------------------- the button (part of the app shell)
-export const micButton = () => `<button class="mic-fab" id="mic-fab" type="button" aria-label="Speak or type to Steady" title="Speak to Steady (V)" data-testid="mic">${I.mic}</button>`;
-export function mountMic(root = document) {
-  const b = root.querySelector('#mic-fab'); if (!b || b.dataset.bound) return;
+// "Ask": the one floating button. TAP opens Chat (onTap). PRESS AND HOLD is the voice agent, exactly as before: the
+// capture sheet opens and records while the finger is down (a pause never ends it), releasing finishes, then
+// transcript → drafts → Accept. A hold let go of very quickly keeps listening hands-free (Done, or a pause, finishes).
+const isDown = () => !!document.querySelector('.guide, .onboarding') || sheetOpen();
+export const askButton = () => `<button class="ask-fab" id="ask-fab" type="button" data-testid="ask" aria-label="Ask about your data. Press and hold to talk to Steady" aria-keyshortcuts="V" title="Tap to ask · Hold to talk (V)">
+  <span class="ask-ring" aria-hidden="true"></span>${I.ask}<span class="ask-label" aria-hidden="true">Ask</span></button>`;
+export function mountAsk(root = document, { onTap } = {}) {
+  const b = root.querySelector('#ask-fab'); if (!b || b.dataset.bound) return;
   b.dataset.bound = '1';
-  let t0 = 0, held = false;
-  b.addEventListener('pointerdown', e => {
-    if (e.button > 0 || sheetOpen()) return;
-    t0 = performance.now(); held = true;
-    try { b.setPointerCapture(e.pointerId); } catch { /* synthetic */ }
-    b.classList.add('pressed');
+  let timer = 0, down = false, heldAt = 0, lastUp = -1e9;
+  const tap = () => { hideHint(); onTap?.(); };
+  const fire = () => {
+    timer = 0; heldAt = performance.now();
+    b.classList.remove('arming'); b.classList.add('holding');
+    navigator.vibrate?.(10); hideHint(); setLocal('askHeld', true);
     openVoice();
     if (S) S.holding = true;        // while the finger is down, a pause never ends the recording
-  });
-  const up = () => {
-    if (!held) return; held = false; b.classList.remove('pressed');
-    if (S) S.holding = false;
-    if (performance.now() - t0 > 450 && S?.phase === 'listening') stopRecording();      // hold-to-talk: release = done
   };
-  b.addEventListener('pointerup', up); b.addEventListener('pointercancel', up);
-  b.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (!sheetOpen()) openVoice(); } });
+  b.addEventListener('pointerdown', e => {
+    if (e.button > 0 || sheetOpen()) return;
+    down = true; heldAt = 0;
+    try { b.setPointerCapture(e.pointerId); } catch { /* synthetic */ }
+    b.classList.add('pressed', 'arming');
+    clearTimeout(timer); timer = setTimeout(fire, HOLD_MS);
+  });
+  const up = cancel => {
+    if (!down) return; down = false; lastUp = performance.now();
+    b.classList.remove('pressed', 'arming', 'holding');
+    if (timer) { clearTimeout(timer); timer = 0; if (releaseOutcome(0, cancel) === 'tap') tap(); return; }    // released before the hold: a tap
+    if (S) S.holding = false;
+    if (releaseOutcome(HOLD_MS + performance.now() - heldAt) === 'stop' && S?.phase === 'listening') stopRecording();   // hold-to-talk: release = done
+  };
+  b.addEventListener('pointerup', () => up(false)); b.addEventListener('pointercancel', () => up(true));
+  // if the button loses the pointer (a sheet or permission prompt took it), the finger lifting anywhere still counts
+  addEventListener('pointerup', () => up(false), true); addEventListener('pointercancel', () => up(true), true);
+  addEventListener('blur', () => up(true));
+  // the click Chrome sends after a long press lands on whatever is under the finger (the new sheet): swallow it
+  addEventListener('click', e => { if (heldAt && performance.now() - lastUp < 700) { e.preventDefault(); e.stopPropagation(); heldAt = 0; } }, true);
+  b.addEventListener('contextmenu', e => e.preventDefault());          // a long press must not open the browser menu
+  // keyboard (Enter/Space) and assistive tech send a click with no pointer sequence: that's a tap
+  b.addEventListener('click', e => { e.preventDefault(); if (down || performance.now() - lastUp < 700 || sheetOpen()) return; tap(); });
   // tuck away while reading down a page (so it never sits on top of an amount), back as soon as you scroll up
   let lastY = scrollY;
   addEventListener('scroll', () => {
@@ -53,15 +76,38 @@ export function mountMic(root = document) {
     lastY = y;
   }, { passive: true });
   addEventListener('hashchange', () => b.classList.remove('tucked'));
+  // first runs: a quiet hint above the button, so both gestures are discoverable (until the first hold, at most 3 times)
+  if (!local('askHeld') && (+local('askHintN', 0) || 0) < 3) {
+    let tries = 0;
+    const show = () => {
+      if (!b.isConnected || local('askHeld')) return;
+      if ((isDown() || document.documentElement.classList.contains('chat-open')) && tries++ < 20) { setTimeout(show, 1500); return; }
+      if (tries > 20) return;
+      setLocal('askHintN', (+local('askHintN', 0) || 0) + 1);
+      const h = document.createElement('div');
+      h.className = 'ask-hint'; h.id = 'ask-hint'; h.setAttribute('role', 'note'); h.dataset.testid = 'ask-hint';
+      h.innerHTML = '<span><b>Tap</b> to ask</span><i aria-hidden="true"></i><span><b>Hold</b> to talk</span>';
+      b.after(h); requestAnimationFrame(() => h.classList.add('show'));
+      setTimeout(hideHint, 7000);
+    };
+    setTimeout(show, 1200);
+  }
 }
+function hideHint() { const h = document.getElementById('ask-hint'); if (!h) return; h.classList.remove('show'); setTimeout(() => h.remove(), 300); }
 
 // ---------------------------------------------------------------- session
+// A screen can take over the mic to dictate into its own field (Chat: the composer). Then the mic only transcribes:
+// no planning, no drafts, nothing is saved; the words land in the field for the user to edit and send.
+let micTarget = null;
+export const setMicTarget = fn => { micTarget = fn || null; };
 let S = null;
 export function openVoice({ mode } = {}) {
   if (S) return;
+  const dictate = micTarget;
+  if (dictate && (mode === 'type' || !voiceReady())) { dictate(null, whyTyping(mode).replace(/ ?(Type it instead\.|Typing works( now)?\.|Type it; this device will understand\.|or type here\.)$/, '').trim()); return; }
   const useVoice = mode !== 'type' && voiceReady();
-  S = { phase: 'idle', drafts: [], originals: {}, undo: [], pairs: [], text: '', meta: null };
-  const api = openSheet({ title: 'Tell Steady', cls: 'voice-sheet', body: '<div class="vx" id="vx" data-testid="voice-sheet"></div>',
+  S = { phase: 'idle', drafts: [], originals: {}, undo: [], pairs: [], text: '', meta: null, dictate };
+  const api = openSheet({ title: dictate ? 'Speak your question' : 'Tell Steady', cls: 'voice-sheet', body: '<div class="vx" id="vx" data-testid="voice-sheet"></div>',
     onMount: (b) => { S.root = b.querySelector('#vx'); b.addEventListener('click', onClick); b.addEventListener('submit', onSubmit); } });
   S.api = api;
   api.onClose = () => finish(true);
@@ -214,6 +260,7 @@ async function finalize(s, gen) {
   if (S !== s || s.gen !== gen) return;
   const text = parts.map(x => x.trim()).filter(Boolean).join(' ');
   if (!text) { renderError(s.segErr ? friendly(s.segErr) : 'I couldn’t make out any words. Try again, or type it.'); return; }
+  if (s.dictate) { const fn = s.dictate; s.api.close(); fn(text); return; }
   await understand(text);
 }
 
@@ -237,6 +284,7 @@ async function understand(text) {
 // ---------------------------------------------------------------- states
 function renderTyping(note = '') {
   releaseMic();
+  if (S?.dictate) { const fn = S.dictate; S.api.close(); fn(null); return; }   // dictating: typing happens in the screen's own field
   set('typing', `<form class="vx-typeform" data-vx-form="type">
       ${note ? `<p class="hint">${esc(note)}</p>` : ''}
       <textarea id="vx-text" rows="3" autofocus aria-label="What happened or what you need" placeholder="e.g. 250 lunch, finished DSA, remind me to call amma at 7">${esc(S.text || '')}</textarea>

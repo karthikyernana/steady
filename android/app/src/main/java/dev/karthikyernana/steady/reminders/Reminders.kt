@@ -137,8 +137,9 @@ class ActionReceiver : BroadcastReceiver() {
         val id = i.getStringExtra("taskId") ?: return
         val key = i.getStringExtra("key") ?: "st-$id"
         NotificationManagerCompat.from(ctx).cancel(Reminders.idFor(key))
-        val pr = goAsync()
-        SteadyApp.get(ctx).taskAction(i.action?.substringAfterLast('.') ?: return, id) { pr.finish() }
+        // goAsync() is null when onReceive is called directly (tests); never let finish() throw on a background coroutine
+        val pr: PendingResult? = goAsync()
+        SteadyApp.get(ctx).taskAction(i.action?.substringAfterLast('.') ?: return, id) { pr?.finish() }
     }
 }
 

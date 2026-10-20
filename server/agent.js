@@ -25,16 +25,23 @@ export function agentConfig() {
 class AgentError extends Error { constructor(status, msg) { super(msg); this.status = status; this.public = true; } }
 
 // ---------------------------------------------------------------- usage cap (per owner, per day, per kind)
-export async function countUse(ownerId, kind) {
+// opts.limit / opts.what: the chat agent has its own cap (AGENT_DAILY_CAP) and wording; voice keeps AGENT_DAILY_LIMIT.
+export async function countUse(ownerId, kind, { limit = DAILY(), what = 'the voice agent' } = {}) {
   const day = zonedNow('Asia/Kolkata').date;
   const n = await withOwner(ownerId, async c => (await c.query(
     `insert into agent_usage (owner_id, day, kind, n) values (app_owner(), $1, $2, 1)
      on conflict (owner_id, day, kind) do update set n = agent_usage.n + 1 returning n`, [day, kind])).rows[0].n);
-  if (n > DAILY()) throw new AgentError(429, `That's the daily limit for the voice agent (${DAILY()}). It resets at midnight.`);
+  if (n > limit) throw new AgentError(429, `That's the daily limit for ${what} (${limit}). It resets at midnight.`);
   const total = (await query(
     `insert into agent_usage_total (day, kind, n) values ($1, $2, 1)
      on conflict (day, kind) do update set n = agent_usage_total.n + 1 returning n`, [day, kind])).rows[0].n;
-  if (total > GLOBAL_DAILY()) throw new AgentError(429, 'The voice agent is resting for today. It resets at midnight; typing still works.');
+  if (total > GLOBAL_DAILY()) throw new AgentError(429, kind === 'chat' ? 'Chat is resting for today. It resets at midnight; everything else works.' : 'The voice agent is resting for today. It resets at midnight; typing still works.');
+}
+// Give one use back (a turn where no model could answer should not eat the user's daily cap).
+export async function refundUse(ownerId, kind) {
+  const day = zonedNow('Asia/Kolkata').date;
+  await withOwner(ownerId, c => c.query('update agent_usage set n = greatest(0, n - 1) where owner_id = app_owner() and day = $1 and kind = $2', [day, kind]));
+  await query('update agent_usage_total set n = greatest(0, n - 1) where day = $1 and kind = $2', [day, kind]);
 }
 
 // ---------------------------------------------------------------- memory
