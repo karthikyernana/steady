@@ -87,11 +87,21 @@ class UiFlowTest {
         rule.onNodeWithTag("tab-insights").performClick()
         rule.onNodeWithTag("remember").assertExists()
 
-        // Voice: offline-only users are told to sign in, nothing breaks
+        // Voice while signed out: typing is understood on the phone; drafts can be fixed before accepting
         rule.onNodeWithTag("mic-fab").performClick(); rule.waitForIdle()
-        rule.onNodeWithText("needs your account", substring = true).assertExists()
-        rule.activity.onBackPressedDispatcher.onBackPressed()
-        rule.waitForIdle()
+        rule.onNodeWithText("Typing works right here", substring = true).assertExists()
+        rule.onNodeWithTag("voice-text").performTextInput("paid swiggy for lunch, remind me to call amma in 10 minutes")
+        rule.onNodeWithTag("voice-understand").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick); rule.waitForIdle()
+        assertEquals(2, rule.onAllNodesWithTag("draft").fetchSemanticsNodes().size)
+        // the money draft has no amount: Accept stays locked until it is typed in
+        rule.onNodeWithTag("draft-needs").assertExists()
+        rule.onNodeWithTag("de-amount").performTextInput("180"); rule.waitForIdle()
+        rule.onNodeWithTag("draft-needs").assertDoesNotExist()
+        rule.onNodeWithTag("accept-all").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick); rule.waitForIdle()
+        val snap = app.store.snapshot.value
+        val sw = snap.money.single { it.raw.str("source") == "voice" }; assertEquals(180.0, sw.amount, 0.0); assertEquals("Swiggy", sw.payee)
+        val rem = snap.tasks.first { it.title.contains("amma", true) }
+        assertTrue(rem.reminder); assertNotNull(rem.dueTime)
 
         // You / settings
         rule.onNodeWithTag("you-btn").performClick()

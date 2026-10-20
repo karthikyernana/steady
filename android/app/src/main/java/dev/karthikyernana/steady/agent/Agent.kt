@@ -11,6 +11,23 @@ import java.time.ZoneId
  * an utterance into drafts, and apply only the drafts Karthik accepts. Every apply returns an undo.
  */
 data class Draft(val type: String, val f: JsonObject, val labels: JsonObject, val confidence: Double, val needs: List<String>, val evidence: String = "") {
+    companion object {
+        /** What a draft still needs before it can be accepted (same rules as missing() in js/core/agent.js). */
+        fun missing(type: String, f: JsonObject): List<String> {
+            fun blank(k: String) = f.str(k).isNullOrBlank()
+            return when (type) {
+                "task", "reminder" -> listOfNotNull("title".takeIf { blank("title") }, "time".takeIf { type == "reminder" && blank("dueTime") })
+                "money" -> listOfNotNull("amount".takeIf { (f.num("amount") ?: 0.0) <= 0.0 }, "category".takeIf { blank("category") })
+                "complete" -> listOfNotNull("task".takeIf { blank("taskId") && blank("title") })
+                "progress" -> listOfNotNull("goal".takeIf { blank("goalId") })
+                "goal" -> listOfNotNull("title".takeIf { blank("title") })
+                "thought" -> listOfNotNull("text".takeIf { blank("text") })
+                else -> emptyList()
+            }
+        }
+    }
+    /** A copy with some fields changed; what's missing is re-checked so Accept unlocks as soon as it's fixed. */
+    fun edit(vararg pairs: Pair<String, Any?>): Draft { val nf = f.with(*pairs); return copy(f = nf, needs = missing(type, nf)) }
     /** One plain sentence saying what accepting does, like the web's draft cards. */
     val sentence: String get() {
         val whenTxt = listOfNotNull(f.str("dueDate")?.let { Dates.fmtDateKey(it).replaceFirstChar { c -> c.lowercase() } }, f.str("dueTime")?.let { "at " + Dates.fmtTime(it) }).joinToString(" ")
@@ -82,12 +99,27 @@ class Agent(private val store: Store, private val api: Api) {
         }
     }
 
-    suspend fun plan(text: String): Plan {
+    /** Server agent when signed in and reachable; otherwise the on-device rules, so typing always works. */
+    suspend fun plan(text: String, signedIn: Boolean = true): Plan {
+        if (!signedIn) return Rules.plan(text, store.snapshot.value)
+        return try { planServer(text) } catch (e: dev.karthikyernana.steady.net.ApiError) {
+            if (e.status == 0 || e.status >= 500 || e.status == 404) Rules.plan(text, store.snapshot.value) else throw e
+        }
+    }
+
+    /** Tell the server which drafts were accepted and how they were corrected, so it learns categories and payees. */
+    suspend fun learn(pairs: List<Pair<Draft, Draft>>) {
+        if (pairs.isEmpty()) return
+        fun j(d: Draft) = buildJsonObject { put("type", d.type); put("f", d.f); put("evidence", d.evidence) }
+        runCatching { api.call("POST", "agent/learn", buildJsonObject { putJsonArray("pairs") { pairs.forEach { (b, a) -> addJsonObject { put("before", j(b)); put("after", j(a)) } } } }) }
+    }
+
+    private suspend fun planServer(text: String): Plan {
         val r = api.call("POST", "agent/plan", buildJsonObject { put("text", text); put("context", context(store.snapshot.value)); put("tz", ZoneId.systemDefault().id) }, timeoutSec = 60)
         val drafts = (r["drafts"] as? JsonArray).orEmpty().mapNotNull { el ->
             val o = el as? JsonObject ?: return@mapNotNull null
             Draft(o.str("type") ?: return@mapNotNull null, o["f"] as? JsonObject ?: JsonObject(emptyMap()), o["labels"] as? JsonObject ?: JsonObject(emptyMap()),
-                o.num("confidence") ?: 0.6, (o["needs"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.contentOrNull }, o.str("evidence") ?: "")
+                o.num("confidence") ?: 0.6, (o["needs"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.contentOrNull }, o.str("evidence") ?: "").let { d -> d.copy(needs = (d.needs + Draft.missing(d.type, d.f)).distinct()) }
         }
         return Plan(drafts, r.str("clarification"), r.str("provider"))
     }

@@ -97,7 +97,7 @@ fun TaskSheet(t: Task, onClose: () -> Unit) {
     SSheet(onClose, "Edit task") {
         SField(title, { title = it }, "Task", testTag = "edit-title")
         Spacer(Modifier.height(6.dp))
-        DateField("Day", date, { date = it }, allowClear = true)
+        DateField("Day", date, { v -> if (v != null) date = v })
         TimeField("Time", time) { time = it; if (it != null && c.snap.settings.bool("defaultReminder") != false) rem = true }
         Spacer(Modifier.height(8.dp))
         SField(dur, { v -> dur = v.filter(Char::isDigit).take(3) }, "Minutes (optional)", keyboard = KeyboardType.Number)

@@ -1,7 +1,6 @@
 package dev.karthikyernana.steady
 
 import android.graphics.Bitmap
-import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -29,7 +28,15 @@ class ScreenshotTest {
 
     private fun shot(name: String) {
         rule.waitForIdle(); rule.mainClock.advanceTimeBy(1200); rule.waitForIdle()
-        val bmp = rule.onRoot().captureToImage().asAndroidBitmap()
+        // draw the whole window (incl. dialogs/sheets are separate windows, so we draw the top-most decor view)
+        @Suppress("UNCHECKED_CAST")
+        val views = Class.forName("android.view.WindowManagerGlobal").getMethod("getInstance").invoke(null).let { g -> g.javaClass.getDeclaredField("mViews").apply { isAccessible = true }.get(g) as List<android.view.View> }.toList()
+        val root = rule.activity.window.decorView
+        val bmp = Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888)
+        rule.runOnUiThread {
+            val cv = android.graphics.Canvas(bmp)
+            views.filter { it.isShown && it.width > 0 }.forEach { v -> val loc = IntArray(2); v.getLocationOnScreen(loc); cv.save(); cv.translate(loc[0].toFloat(), loc[1].toFloat()); v.draw(cv); cv.restore() }
+        }
         File(out, "$name.png").outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
     }
 
