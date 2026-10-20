@@ -1,0 +1,18 @@
+{
+  "appId": "dev.karthikyernana.steady",
+  "appName": "Steady",
+  "webDir": "www",
+  "server": {
+    "url": "https://karthikytodo.vercel.app",
+    "androidScheme": "https",
+    "errorPath": "offline.html"
+  },
+  "android": {
+    "allowMixedContent": false,
+    "backgroundColor": "#FBF8F1"
+  },
+  "plugins": {
+    "LocalNotifications": { "smallIcon": "ic_stat_steady", "iconColor": "#2F5D46" },
+    "SystemBars": { "insetsHandling": "css" }
+  }
+}

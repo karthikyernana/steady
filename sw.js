@@ -22,6 +22,7 @@ const SHELL = [
   './js/data/store.js',
   './js/data/sync.js',
   './js/platform/notify.js',
+  './js/platform/native.js',
   './js/ui/charts.js',
   './js/ui/icons.js',
   './js/ui/motion.js',

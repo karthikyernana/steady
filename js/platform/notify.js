@@ -6,15 +6,17 @@
 import { all, local, setLocal, meta } from '../data/store.js';
 import { todayKey, keyAdd, fromKey, toMin, fmtTime } from '../core/util.js';
 import { api, cloudReady, serverConfig, deviceName } from '../data/sync.js';
+import { isNative, nativePermission, requestNativePermission, showNative, reconcileNative } from './native.js';
 
 export const NTFY_DEFAULT = 'https://ntfy.sh';
 export const ntfyServer = () => (meta('settings').ntfyServer || NTFY_DEFAULT).replace(/\/+$/, '');
 const MAX_AHEAD = 3 * 864e5 - 5 * 60e3; // ntfy.sh limit: 3 days
 const MIN_AHEAD = 15e3;                  // ntfy.sh minimum: 10 s
 
-export const permission = () => ('Notification' in window ? Notification.permission : 'unsupported');
+export const permission = () => (isNative() ? nativePermission() : 'Notification' in window ? Notification.permission : 'unsupported');
 
 export async function requestPermission() {
+  if (isNative()) { const p = await requestNativePermission(); await setLocal('notifAsked', true); return p; }
   if (!('Notification' in window)) return 'unsupported';
   const p = await Notification.requestPermission();
   await setLocal('notifAsked', true);
@@ -24,6 +26,8 @@ export async function requestPermission() {
 // Task reminders carry Done / Snooze actions (handled in sw.js); the same tag as the server push, so the two never stack.
 export async function showLocal(title, body, tag = 'steady', extra = {}) {
   if (permission() !== 'granted') return false;
+  // Android app: task reminders and the check-in are already native alarms (reconcileNative), so never show them twice.
+  if (isNative()) return /^task-|^checkin$/.test(tag) ? true : showNative(title, body, extra.data || {});
   const reg = await navigator.serviceWorker?.getRegistration();
   const opts = { body, tag, icon: 'icons/icon-192.png', badge: 'icons/badge-96.png', data: { url: './#/today', ...extra.data }, ...(extra.actions ? { actions: extra.actions, renotify: true, requireInteraction: !!extra.sticky } : {}) };
   if (reg) { await reg.showNotification(title, opts); return true; }
@@ -195,6 +199,7 @@ let reconciling = null, remoteTimer = null;
 // Every reminder change goes through here: re-arm the on-device timer, mirror to the server queue soon (not only after the
 // next sync), and make ntfy's queue match. Safe to call often.
 export function reconcileNtfy() {
+  reconcileNative();
   clearTimeout(remoteTimer); remoteTimer = setTimeout(() => { reconcileRemote(); }, 1200);
   armLocal();
   if (reconciling) return reconciling;

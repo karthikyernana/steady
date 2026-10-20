@@ -4,6 +4,7 @@ import { I } from '../icons.js';
 import { on, toast, openSheet, segmented, bindSeg, toggle, confirmSheet, requestRender } from '../ui.js';
 import { account, serverConfig, syncNow, getStatus, signOut, signInWithGoogle, checkEmail, signUp, logIn, changePassword, deleteAccount, pendingCount, createReadToken, listReadTokens, revokeReadToken } from '../../data/sync.js';
 import { permission, requestPermission, showLocal, ntfyPublish, reconcileNtfy, reconcileRemote, ntfyServer, NTFY_DEFAULT, enablePush, disablePush, pushSupported, reminderStatus, sendTestReminder } from '../../platform/notify.js';
+import { isNative } from '../../platform/native.js';
 import { downloadExport, importJSON } from '../../data/backup.js';
 import { agentMemory, resetAgentMemory } from '../../data/agent.js';
 
@@ -59,7 +60,7 @@ export function renderSettings() {
 
   <section class="card set" id="sec-notif"><h2 class="card-title">${I.bell}<span>Reminders</span></h2>
     ${acct ? '' : '<p class="muted">Sign in to get them when the app is closed.</p>'}
-    <div class="row between gap wrap"><span class="pill ${perm === 'granted' ? 'ok' : ''}" data-testid="perm-state">${perm === 'granted' ? (pushOn ? 'On, including when closed' : 'On while Steady is open') : perm === 'denied' ? 'Blocked in browser settings' : perm === 'unsupported' ? 'Not supported here' : 'Not enabled yet'}</span>
+    <div class="row between gap wrap"><span class="pill ${perm === 'granted' ? 'ok' : ''}" data-testid="perm-state">${perm === 'granted' ? (pushOn || isNative() ? 'On, including when closed' : 'On while Steady is open') : perm === 'denied' ? 'Blocked in browser settings' : perm === 'unsupported' ? 'Not supported here' : 'Not enabled yet'}</span>
       <span class="row gap">${perm !== 'granted' && perm !== 'denied' && perm !== 'unsupported' ? '<button class="btn primary sm" data-act="notif-ask">Turn on</button>' : ''}
       ${perm === 'granted' && acct && pushSupported() && !pushOn && cfg?.vapidPublicKey ? '<button class="btn primary sm" data-act="push-on" data-testid="push-on">Also when closed</button>' : ''}
       ${perm === 'granted' ? `<button class="btn ghost sm" data-act="notif-test" data-testid="notif-test">${acct && pushOn ? 'Test with app closed' : 'Test'}</button>` : ''}</span></div>

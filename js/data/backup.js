@@ -4,6 +4,7 @@ import { markDirty } from './sync.js';
 const merge = (l, r) => mergeColls(l, r, SYNCED);
 import { readDoc, makeDoc, migrateCollections, SCHEMA_VERSION } from '../core/schema.js';
 import { todayKey } from '../core/util.js';
+import { isNative, shareFile } from '../platform/native.js';
 
 export function exportJSON() {
   const doc = makeDoc(snapshotCollections(), { exportedAt: new Date().toISOString() });
@@ -11,6 +12,7 @@ export function exportJSON() {
 }
 
 export function downloadExport() {
+  if (isNative()) return shareFile(`steady-${todayKey()}.json`, exportJSON());
   const blob = new Blob([exportJSON()], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);

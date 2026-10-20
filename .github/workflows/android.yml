@@ -1,0 +1,40 @@
+# Builds the Steady Android app (android-app/, Capacitor) and attaches the unsigned release APK to a GitHub pre-release.
+# The APK is signed afterwards with Karthik's private key (kept off GitHub), so this build never sees a secret.
+name: android
+on:
+  push:
+    branches: [feature/android, main]
+    paths: ['android-app/**', '.github/workflows/android.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults: { run: { working-directory: android-app } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '21', cache: gradle }
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: npm, cache-dependency-path: android-app/package-lock.json }
+      - run: npm ci --no-audit --no-fund
+      - run: npx cap sync android
+      - name: Build release APK (unsigned) + run lint
+        working-directory: android-app/android
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleRelease lintRelease
+        env:
+          STEADY_VERSION_CODE: ${{ github.run_number }}
+          STEADY_VERSION_NAME: 1.0.${{ github.run_number }}
+      - name: Publish pre-release
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: |
+          APK=android/app/build/outputs/apk/release/app-release-unsigned.apk
+          ls -la "$APK"
+          cp "$APK" steady-unsigned-${{ github.run_number }}.apk
+          cp android/app/build/reports/lint-results-release.html lint-${{ github.run_number }}.html || true
+          gh release create "android-build-${{ github.run_number }}" steady-unsigned-${{ github.run_number }}.apk lint-${{ github.run_number }}.html \
+            --prerelease --target "${{ github.sha }}" --title "Android build ${{ github.run_number }}" --notes "Unsigned build of ${{ github.sha }} (${{ github.ref_name }})."

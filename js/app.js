@@ -12,7 +12,8 @@ import { renderSettings, mountSettings, openSignIn } from './ui/views/settings.j
 import { renderOnboarding, mountOnboarding, mark } from './ui/views/onboarding.js';
 import { syncNow, onStatus, initStatus, cloudReady, getStatus, markDirty, checkSession, startLive } from './data/sync.js';
 import * as motion from './ui/motion.js';
-import { startLocalScheduler, reconcileNtfy, reconcileRemote, enablePush, requestPermission, permission, rearmLocal } from './platform/notify.js';
+import { initNative } from './platform/native.js';
+import { startLocalScheduler, reconcileNtfy, reconcileRemote, enablePush, requestPermission, permission, rearmLocal, wantedReminders } from './platform/notify.js';
 
 const ROUTES = {
   today: { label: 'Today', icon: I.today, render: renderToday, mount: mountToday },
@@ -264,6 +265,19 @@ async function boot() {
   initStatus();
   render();
   if (cloudReady()) { syncNow('open'); checkSession(); if (permission() === 'granted') enablePush().catch(() => {}); }
+  await initNative({
+    wanted: horizon => wantedReminders(horizon),
+    onAction: (type, id) => taskAction(type, id),
+    onCheckin: () => openCheckin(),
+    // hardware back: close the top sheet, else go back to Today, else (on Today) leave the app in the background
+    onBack: () => {
+      if (sheetOpen()) { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); return true; }
+      if (!/^#\/(today)?$/.test(location.hash || '#/')) { location.hash = '#/today'; return true; }
+      return false;
+    },
+  });
+  // Android app, first launch: ask for notifications once (Android 13+ needs the runtime grant for reminders)
+  if (document.documentElement.classList.contains('native') && permission() === 'default' && !local('nativeAsked')) { await setLocal('nativeAsked', true); requestPermission().catch(() => {}); }
   reconcileNtfy();
   startLocalScheduler(t => toast(`Now: ${t.title}`, { ms: 10000, undo: null }));
   if (location.search.includes('checkin')) openCheckin();
