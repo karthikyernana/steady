@@ -111,3 +111,20 @@ test('learning: categories, payees, and the wording behind a correction', () => 
   const again = learn(m, [{ before, after: { ...after, f: { ...after.f, category: 'Commute' } } }]);
   assert.equal(again.corrections.filter(x => x.w === 'rapido').length, 1); assert.equal(again.corrections[0].c, 'Commute');
 });
+
+// v1.4: "remind me in 5 minutes" must become a real clock time (the model returns an offset; the app does the maths)
+test('in_minutes and "reminder for N minutes" become an exact time in his zone', async () => {
+  const { compactContext, validatePlan, rulesPlan, zonedNow } = await import('../../js/core/agent.js');
+  const now = zonedNow('Asia/Kolkata', new Date('2026-10-20T09:39:40Z'));   // 15:09:40 IST
+  const c = compactContext({ tz: 'Asia/Kolkata', tasks: [], goals: [], money: [], categories: [], thoughts: [], profile: {} }, null, now);
+  const A = o => ({ type: 'reminder', title: 'Drink water', date: null, time: null, in_minutes: null, duration_min: null, priority: null, confidence: 0.9, evidence: '', ...o });
+  const one = acts => validatePlan({ actions: acts }, c).drafts[0].f;
+  let f = one([A({ in_minutes: 5 })]); assert.equal(f.dueTime, '15:15'); assert.equal(f.dueDate, '2026-10-20'); assert.equal(f.reminder, true);
+  f = one([A({ duration_min: 5 })]); assert.equal(f.dueTime, '15:15'); assert.equal(f.durationMin, null);
+  f = one([A({ in_minutes: 600 })]); assert.equal(f.dueDate, '2026-10-21'); assert.equal(f.dueTime, '01:10');
+  f = one([A({ time: '19:00', duration_min: 20 })]); assert.equal(f.dueTime, '19:00'); assert.equal(f.durationMin, 20);
+  const r = t => validatePlan(rulesPlan(t, c), c).drafts[0].f;
+  assert.equal(r('set a reminder for 5 minutes').dueTime, '15:15');
+  assert.equal(r('set an alarm for 30 min').dueTime, '15:40');
+  assert.equal(r('remind me to call amma in 10 minutes').title, 'Call amma');
+});

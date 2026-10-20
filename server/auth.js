@@ -19,19 +19,30 @@ export function parseCookies(req) {
   return out;
 }
 
-function cookieHeader(value, maxAgeSec, req) {
+export function cookieHeader(value, maxAgeSec, req) {
   const secure = (req.headers['x-forwarded-proto'] || '').includes('https') || process.env.NODE_ENV === 'production' || process.env.VERCEL;
   return `${COOKIE}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSec}${secure ? '; Secure' : ''}`;
+}
+
+// Where a request comes from: Vercel adds IP geo headers on every request (city is URL-encoded). Locally there are none.
+export function reqMeta(req) {
+  const h = req.headers || {};
+  const ip = String(h['x-real-ip'] || h['x-forwarded-for'] || req.socket?.remoteAddress || '').split(',')[0].trim().slice(0, 64) || null;
+  const dec = v => { try { return decodeURIComponent(String(v || '')).trim(); } catch { return String(v || '').trim(); } };
+  const place = [dec(h['x-vercel-ip-city']), dec(h['x-vercel-ip-country-region']), dec(h['x-vercel-ip-country'])].filter(Boolean).join(', ').slice(0, 120) || null;
+  const ua = String(h['user-agent'] || '').slice(0, 200) || null;
+  return { ip, place, ua };
 }
 
 export async function currentOwner(req) {
   const tok = parseCookies(req)[COOKIE];
   if (!tok || tok.length < 40) return null;
   const { rows } = await query(
-    `update sessions set last_seen_at = now(), expires_at = greatest(expires_at, now() + interval '${SESSION_DAYS} days')
+    `update sessions set last_seen_at = now(), expires_at = greatest(expires_at, now() + interval '${SESSION_DAYS} days'),
+            last_ip = coalesce($2, last_ip), last_place = coalesce($3, last_place)
        where token_hash = $1 and expires_at > now()
-     returning owner_id, (select email from owners o where o.id = sessions.owner_id) as email`, [sha256(tok)]);
-  return rows[0] ? { id: rows[0].owner_id, email: rows[0].email } : null;
+     returning owner_id, token_hash, (select email from owners o where o.id = sessions.owner_id) as email`, [sha256(tok), reqMeta(req).ip, reqMeta(req).place]);
+  return rows[0] ? { id: rows[0].owner_id, email: rows[0].email, session: rows[0].token_hash } : null;
 }
 
 export async function findOwner(email) {
@@ -56,12 +67,31 @@ export async function startSession(res, req, email, device) {
     o = (await query('insert into owners (email) values ($1) returning id, email', [email])).rows[0];
   }
   const tok = randomBytes(32).toString('base64url');
-  await query(`insert into sessions (token_hash, owner_id, device, expires_at) values ($1, $2, $3, now() + interval '${SESSION_DAYS} days')`,
-    [sha256(tok), o.id, (device || '').slice(0, 80)]);
+  const m = reqMeta(req);
+  await query(`insert into sessions (token_hash, owner_id, device, expires_at, user_agent, created_ip, created_place, last_ip, last_place)
+               values ($1, $2, $3, now() + interval '${SESSION_DAYS} days', $4, $5, $6, $5, $6)`,
+    [sha256(tok), o.id, (device || '').slice(0, 80), m.ua, m.ip, m.place]);
   const rows = [o];
   await query(`delete from sessions where expires_at < now()`);
   res.setHeader('Set-Cookie', cookieHeader(tok, SESSION_DAYS * 86400, req));
   return { id: rows[0].id, email };
+}
+
+// ---- devices: every signed-in session of an owner. Public id = first 16 hex chars of the token's SHA-256 (not the token).
+export async function listSessions(ownerId, currentHash) {
+  const { rows } = await query(
+    `select token_hash, device, user_agent, created_at, last_seen_at, created_place, last_place, last_ip from sessions
+      where owner_id = $1 and expires_at > now() order by last_seen_at desc`, [ownerId]);
+  return rows.map(r => ({ id: r.token_hash.slice(0, 16), device: r.device || null, userAgent: r.user_agent || null,
+    createdAt: new Date(r.created_at).getTime(), lastSeenAt: new Date(r.last_seen_at).getTime(),
+    createdPlace: r.created_place || null, lastPlace: r.last_place || null, lastIp: r.last_ip || null, current: r.token_hash === currentHash }));
+}
+export async function revokeSession(ownerId, id) {
+  if (!/^[0-9a-f]{16}$/.test(String(id || ''))) return 0;
+  return (await query(`delete from sessions where owner_id = $1 and left(token_hash, 16) = $2`, [ownerId, id])).rowCount;
+}
+export async function revokeOtherSessions(ownerId, keepHash) {
+  return (await query(`delete from sessions where owner_id = $1 and token_hash <> $2`, [ownerId, keepHash || ''])).rowCount;
 }
 
 export async function endSession(res, req) {

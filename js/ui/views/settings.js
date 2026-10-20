@@ -2,7 +2,7 @@ import { meta, setMeta, local, setLocal, wipeAll } from '../../data/store.js';
 import { esc, randomTopic, ago } from '../../core/util.js';
 import { I } from '../icons.js';
 import { on, toast, openSheet, segmented, bindSeg, toggle, confirmSheet, requestRender } from '../ui.js';
-import { account, serverConfig, syncNow, getStatus, signOut, signInWithGoogle, checkEmail, signUp, logIn, changePassword, deleteAccount, pendingCount, createReadToken, listReadTokens, revokeReadToken } from '../../data/sync.js';
+import { account, serverConfig, syncNow, getStatus, signOut, signInWithGoogle, checkEmail, signUp, logIn, changePassword, deleteAccount, pendingCount, createReadToken, listReadTokens, revokeReadToken, listSessions, revokeSession, revokeOtherSessions } from '../../data/sync.js';
 import { permission, requestPermission, showLocal, ntfyPublish, reconcileNtfy, reconcileRemote, ntfyServer, NTFY_DEFAULT, enablePush, disablePush, pushSupported, reminderStatus, sendTestReminder } from '../../platform/notify.js';
 import { downloadExport, importJSON } from '../../data/backup.js';
 import { agentMemory, resetAgentMemory } from '../../data/agent.js';
@@ -19,6 +19,7 @@ function syncSection() {
     return `<div class="sync-status ${st.state}" data-testid="sync-status"><span class="dot"></span><div><strong>${label}</strong>
         <small>${esc(acct.email)} · last synced ${ago(st.lastSyncedAt || local('lastSyncedAt'))}${pend ? ` · ${pend} change${pend === 1 ? '' : 's'} waiting` : ''}</small>${st.error ? `<small class="err">${esc(st.error)}</small>` : ''}</div></div>
       <div class="row gap wrap"><button class="btn primary sm" data-act="sync-now" data-testid="sync-now">${I.sync}<span>Sync now</span></button>
+        <button class="btn ghost sm" data-act="acct-devices" data-testid="acct-devices">Devices</button>
         <button class="btn ghost sm" data-act="acct-password">Change password</button>
         <button class="btn ghost sm" data-act="sign-out" data-testid="sign-out">Sign out</button></div>
       <p class="hint small mt">Other devices update within seconds. <button class="link danger-text" data-act="acct-delete">Delete account</button></p>`;
@@ -149,6 +150,44 @@ on('sign-out', async () => {
   await disablePush().catch(() => {}); await signOut(); requestRender(); toast('Signed out on this device.');
 });
 on('sign-in', () => openSignIn());
+
+// Devices: what is signed in to this account, from where, and a way to sign any of it out from here.
+export function deviceLabel(s) {
+  const ua = s.userAgent || '';
+  const app = /okhttp|Dalvik/i.test(ua) ? 'Steady for Android' : /Edg\//.test(ua) ? 'Edge' : /Chrome\//.test(ua) ? 'Chrome' : /Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : '';
+  const os = /Android/i.test(ua) ? 'Android' : /iPhone|iPad/i.test(ua) ? 'iOS' : /Windows/i.test(ua) ? 'Windows' : /Mac OS X/i.test(ua) ? 'macOS' : /Linux/i.test(ua) ? 'Linux' : '';
+  return { name: s.device || [app, os].filter(Boolean).join(' on ') || 'Unknown device', app: [app, os].filter(Boolean).join(' · ') };
+}
+async function openDevices() {
+  let list;
+  try { ({ sessions: list } = await listSessions()); } catch (x) { toast(x.message); return; }
+  const row = s => { const d = deviceLabel(s);
+    return `<li class="pick" data-testid="device-row"><span>${esc(d.name)}${s.current ? ' <em class="small accent">This device</em>' : ''}
+      <small>${esc([d.app && d.app !== d.name ? d.app : '', s.lastPlace || s.createdPlace || 'Unknown place'].filter(Boolean).join(' · '))}</small>
+      <small>Active ${ago(s.lastSeenAt)} · signed in ${new Date(s.createdAt).toLocaleDateString()}${s.createdPlace && s.createdPlace !== s.lastPlace ? ` from ${esc(s.createdPlace)}` : ''}</small></span>
+      <button class="btn ghost sm danger-text" data-revoke="${esc(s.id)}" data-current="${s.current ? 1 : 0}">Sign out</button></li>`; };
+  openSheet({
+    title: 'Devices',
+    body: `<p class="muted small">Everywhere your account is signed in. Don't recognise one? Sign it out, then change your password.</p>
+      <ul class="pick-list">${list.map(row).join('')}</ul>
+      ${list.length > 1 ? '<button class="btn ghost sm danger-text mt" data-act-others>Sign out all other devices</button>' : ''}`,
+    onMount: (b, sheet) => b.addEventListener('click', async e => {
+      const r = e.target.closest('[data-revoke]'); const others = e.target.closest('[data-act-others]');
+      try {
+        if (r) {
+          const current = r.dataset.current === '1';
+          if (current && !(await confirmSheet('Sign out this device? Your data stays here.', 'Sign out'))) return;
+          await revokeSession(r.dataset.revoke); sheet.close();
+          if (current) { await signOut(); requestRender(); toast('Signed out on this device.'); } else { toast('Signed out. That device can no longer sync.'); openDevices(); }
+        } else if (others) {
+          if (!(await confirmSheet('Sign out every other device? They will need your password to sign in again.', 'Sign out others', true))) return;
+          const { revoked } = await revokeOtherSessions(); sheet.close(); toast(`Signed out ${revoked} device${revoked === 1 ? '' : 's'}.`);
+        }
+      } catch (x) { toast(x.message); }
+    }),
+  });
+}
+on('acct-devices', () => openDevices());
 on('notif-ask', async () => { const p = await requestPermission(); if (p === 'granted' && account()) await enablePush().catch(() => {}); requestRender(); });
 on('push-on', async () => { try { await enablePush(); toast('Reminders will arrive even when Steady is closed.'); } catch (x) { toast(`Couldn't enable push: ${x.message}`); } requestRender(); });
 // Signed in with push: a real round trip through the server (queue → trigger → Web Push), so "Test" proves the closed-app path.

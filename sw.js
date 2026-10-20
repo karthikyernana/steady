@@ -1,5 +1,5 @@
 // Steady service worker: offline app shell (network-first, cache fallback) + Web Push + notification clicks.
-const VERSION = 'steady-v1.3.1';
+const VERSION = 'steady-v1.4.0';
 const SHELL = [
   './',
   './index.html',
@@ -34,6 +34,8 @@ const SHELL = [
   './js/ui/views/settings.js',
   './js/ui/views/thoughts.js',
   './js/ui/views/today.js',
+  './fonts/host-grotesk-latin-wght-normal.woff2',
+  './fonts/host-grotesk-latin-ext-wght-normal.woff2',
   './fonts/inter-latin-wght-normal.woff2',
   './fonts/instrument-serif-latin-400-normal.woff2',
   './fonts/instrument-serif-latin-400-italic.woff2',

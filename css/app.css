@@ -1,4 +1,8 @@
 /* Steady — calm, editorial, warm. */
+@font-face { font-family: 'Host Grotesk'; src: url('../fonts/host-grotesk-latin-wght-normal.woff2') format('woff2'); font-weight: 300 800; font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: 'Host Grotesk'; src: url('../fonts/host-grotesk-latin-ext-wght-normal.woff2') format('woff2'); font-weight: 300 800; font-display: swap;
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF; }
 @font-face { font-family: 'Inter'; src: url('../fonts/inter-latin-wght-normal.woff2') format('woff2'); font-weight: 100 900; font-display: swap; }
 @font-face { font-family: 'Instrument Serif'; src: url('../fonts/instrument-serif-latin-400-normal.woff2') format('woff2'); font-weight: 400; font-display: swap; }
 @font-face { font-family: 'Instrument Serif'; src: url('../fonts/instrument-serif-latin-400-italic.woff2') format('woff2'); font-weight: 400; font-style: italic; font-display: swap; }
@@ -12,8 +16,9 @@
   --shadow: 0 1px 0 rgba(28,27,24,.04), 0 8px 24px -12px rgba(28,27,24,.16);
   --shadow-lg: 0 24px 60px -20px rgba(28,27,24,.35);
   --radius: 18px; --radius-sm: 12px;
-  --serif: 'Instrument Serif', 'Iowan Old Style', 'Palatino Linotype', Georgia, serif;
-  --sans: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  /* v1.4: one quiet grotesk everywhere (no poster-style display serif). --serif is kept as the headline role. */
+  --serif: 'Host Grotesk', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --sans: 'Host Grotesk', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --tab-h: 64px; --safe-b: env(safe-area-inset-bottom, 0px);
   /* liquid glass */
   --glass: color-mix(in srgb, var(--surface) 78%, transparent);
@@ -733,3 +738,11 @@ html { scroll-padding-top: calc(72px + env(safe-area-inset-top, 0px)); scroll-pa
 @media (prefers-reduced-motion: reduce) { .mic-fab.tucked { transform: none; } html.kb-open .tabbar, html.kb-open .mic-fab { transform: none; } }
 /* goal names on task rows: show more of the name where there's room */
 @media (min-width: 600px) { .goal-tag { max-width: 36ch; } }
+
+/* ---------- v1.4 type: headlines in Host Grotesk, set a little heavier and tighter; accents by colour, not italics ---------- */
+:root:not([data-style]) .display, [data-style="liquid"] .display { font-weight: 600; letter-spacing: -.035em; line-height: 1.08; font-size: clamp(1.95rem, 7.6vw, 2.8rem); }
+:root:not([data-style]) .display em, [data-style="liquid"] .display em { font-style: normal; }
+:is(:root:not([data-style]), [data-style="liquid"]) :is(.serif, .sec-head h2, .sheet-title, .month-title, .brand, .head-ring span, .empty .big, .bucket-row strong, .m-amt, .stat-n, .boot-word) { font-weight: 600; letter-spacing: -.02em; }
+:is(:root:not([data-style]), [data-style="liquid"]) :is(.remember-list p, .wins p, .dc-effect) { font-weight: 500; letter-spacing: -.01em; font-size: 1.12rem; line-height: 1.35; }
+:is(:root:not([data-style]), [data-style="liquid"]) .brand { font-size: 1.3rem; }
+:is(:root:not([data-style]), [data-style="liquid"]) .dc-said { font-style: normal; }

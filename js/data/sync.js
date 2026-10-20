@@ -171,6 +171,11 @@ export function initStatus() {
   setStatus({ state: cloudReady() ? 'idle' : 'off', lastSyncedAt: local('lastSyncedAt') });
 }
 
+// ---- devices: every signed-in session (name, app, place) and remote sign-out ----
+export const listSessions = () => api('GET', 'auth/sessions');
+export const revokeSession = id => api('POST', 'auth/sessions/revoke', { id });
+export const revokeOtherSessions = () => api('POST', 'auth/sessions/revoke-others');
+
 // ---- Hark plugin: read-only tokens ----
 export const createReadToken = label => api('POST', 'tokens', { label });
 export const listReadTokens = () => api('GET', 'tokens');

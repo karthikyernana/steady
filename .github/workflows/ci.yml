@@ -12,3 +12,47 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm test
       - run: npm run check
+
+  # Android: JVM unit + Robolectric UI flows against a real local Steady server, plus pixel screenshots
+  # of every screen (light, dark, small phone, landscape). Screenshots and reports are uploaded as artifacts.
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: postgres:17
+        env: { POSTGRES_USER: steady, POSTGRES_PASSWORD: steady, POSTGRES_DB: steady }
+        ports: ["5433:5432"]
+        options: --health-cmd "pg_isready -U steady" --health-interval 5s --health-retries 20
+    env:
+      DATABASE_URL: postgres://steady:steady@localhost:5433/steady
+      TZ: Asia/Kolkata
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm ci --ignore-scripts
+      - name: Migrate + start local Steady (AI mocked)
+        run: |
+          node scripts/migrate.mjs
+          nohup node tests/mocks/ai-mock.mjs 8791 > mock.log 2>&1 &
+          PORT=8790 SARVAM_BASE_URL=http://127.0.0.1:8791 GEMINI_BASE_URL=http://127.0.0.1:8791 SARVAM_API_KEY=x GEMINI_API_KEY=x nohup node scripts/dev-server.mjs > dev.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf localhost:8790/api/config && break; sleep 1; done
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 17 }
+      - uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: "8.11.1" }
+      - name: Unit, UI flow and screenshot tests
+        working-directory: android
+        run: STEADY_SHOTS=$GITHUB_WORKSPACE/shots gradle --no-daemon testDebugUnitTest
+      - name: Release build (unsigned check)
+        working-directory: android
+        run: gradle --no-daemon assembleRelease
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: android-screenshots, path: shots/, if-no-files-found: warn }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: android-test-reports, path: "android/app/build/reports/tests/" }
+      - if: failure()
+        run: tail -50 dev.log mock.log || true

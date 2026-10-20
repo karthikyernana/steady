@@ -1,7 +1,7 @@
 // The whole API in one function (Vercel Hobby allows 12; one router keeps it simple). Mounted at /api/*.
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { query, withOwner } from './db.js';
-import { currentOwner, startSession, endSession, verifyGoogleIdToken, checkPassphrase, tooManyAttempts, logAttempt, hashToken, findOwner, createOwner, setPassword, signupMode, mayCreate, normEmail, validEmail, verifyGithubOidc } from './auth.js';
+import { cookieHeader, currentOwner, startSession, endSession, listSessions, revokeSession, revokeOtherSessions, verifyGoogleIdToken, checkPassphrase, tooManyAttempts, logAttempt, hashToken, findOwner, createOwner, setPassword, signupMode, mayCreate, normEmail, validEmail, verifyGithubOidc } from './auth.js';
 import { migrate } from './migrate.js';
 import { sendDue, vapidReady } from './push.js';
 import { triggerFor, triggerMode } from './trigger.js';
@@ -109,7 +109,8 @@ const routes = {
     if (o.password_hash && !checkPassphrase(String(body.current || ''), o.password_hash)) fail(401, 'Your current password is not right.');
     if (typeof body.password !== 'string' || body.password.length < 8) fail(400, 'Use at least 8 characters for your password.');
     await setPassword(o.id, body.password);
-    return { ok: true };
+    const signedOutOthers = await revokeOtherSessions(o.id, me_.session);   // a new password ends every other device's session
+    return { ok: true, signedOutOthers };
   },
 
   'POST auth/google': async (req, res, body) => {
@@ -131,6 +132,18 @@ const routes = {
   },
 
   'POST auth/logout': async (req, res) => { requireCsrf(req); await endSession(res, req); return { signedIn: false }; },
+
+  // ---- devices: see every signed-in device and sign any of them out (this one too) ----
+  'GET auth/sessions': async req => { const o = await me(req); return { sessions: await listSessions(o.id, o.session) }; },
+  'POST auth/sessions/revoke': async (req, res, body) => {
+    requireCsrf(req); const o = await me(req);
+    const id = String(body.id || '');
+    const n = await revokeSession(o.id, id);
+    if (!n) fail(404, 'That device is already signed out.');
+    if (o.session?.startsWith(id)) res.setHeader('Set-Cookie', cookieHeader('', 0, req));
+    return { revoked: n };
+  },
+  'POST auth/sessions/revoke-others': async req => { requireCsrf(req); const o = await me(req); return { revoked: await revokeOtherSessions(o.id, o.session) }; },
 
   // ---- sync ----
   'POST sync/push': async (req, res, body) => {

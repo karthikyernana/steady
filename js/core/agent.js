@@ -115,7 +115,7 @@ export const SYSTEM_PROMPT = `You are Steady's capture agent for Karthik, a stud
 
 Action types:
 - task: a to-do. title, optional date (YYYY-MM-DD), time (HH:MM 24h), duration_min, priority, goal (ref of a goal it serves).
-- reminder: a to-do that must notify him at a time ("remind me…", "గుర్తు చేయి"). Same fields as task; time is required if he said one.
+- reminder: a to-do that must notify him at a time ("remind me…", "set a reminder", "set an alarm", "notify/ping/alert me", "గుర్తు చేయి"). Same fields as task; time is required if he said one.
 - complete: he says he DID something ("done", "finished", "chesanu", "అయిపోయింది", "today I have done…"). Set target to the ref of the matching item in openTasks. If nothing in openTasks matches, leave target null and put what he did in title.
 - progress: he made progress on a GOAL (worked on it, finished a milestone, did one of its daily actions). target = goal ref; milestone = milestone ref if he finished that milestone (then mark_milestone_done=true); title = short description of what he did.
 - goal: a new goal ("my goal is…", "I want to … by …"). title, date = target date if given, milestones = short weekly steps if he listed any, note = why.
@@ -124,6 +124,7 @@ Action types:
 
 Rules:
 - One utterance can hold several actions (e.g. "spent 200 on lunch and finished the DSA task" = money + complete). Never merge two different things; never split one thing into two.
+- Times counted from now ("in 5 minutes", "after 2 hours", "half an hour from now", "5 నిమిషాల్లో", "10 nimishallo") go in in_minutes as a whole number of minutes, with time and date null; the app computes the exact clock time. For a reminder or alarm, "for N minutes" with no clock time also means in N minutes ("set a reminder for 5 minutes" → in_minutes 5, duration_min null). Use time (HH:MM) only for clock times ("at 7", "7:30 pm").
 - Resolve relative dates and times against now.calendar (today, tomorrow, yesterday, weekday names, "next week" = next Monday, "evening" = 19:00, "morning" = 09:00, "night" = 21:00). Never output a past date for a new task unless he said so.
 - Resolve references: "that goal", "the gym one", "same as yesterday" (copy the amount/category from money.recent of yesterday), "it" → use the context. Prefer matching existing items over creating duplicates.
 - Only use refs that appear in the context (t…, g…, g…m…). Never invent refs. If unsure which item he meant, leave target null and lower confidence.
@@ -138,7 +139,7 @@ export const ACTION_SCHEMA = {
   type: 'object', additionalProperties: false,
   properties: {
     type: { type: 'string', enum: ACTION_TYPES },
-    title: N('string'), date: N('string'), time: N('string'), duration_min: N('integer'),
+    title: N('string'), date: N('string'), time: N('string'), in_minutes: N('integer'), duration_min: N('integer'),
     priority: { type: ['string', 'null'], enum: ['low', 'normal', 'high', null] },
     amount: N('number'), money_kind: { type: ['string', 'null'], enum: ['expense', 'income', null] },
     category: N('string'), payee: N('string'), note: N('string'),
@@ -147,7 +148,7 @@ export const ACTION_SCHEMA = {
     milestones: { type: 'array', items: { type: 'string' } }, mark_milestone_done: N('boolean'),
     confidence: { type: 'number' }, evidence: { type: 'string' },
   },
-  required: ['type', 'title', 'date', 'time', 'duration_min', 'priority', 'amount', 'money_kind', 'category', 'payee', 'note', 'thought_kind', 'mood', 'target', 'milestone', 'goal', 'milestones', 'mark_milestone_done', 'confidence', 'evidence'],
+  required: ['type', 'title', 'date', 'time', 'in_minutes', 'duration_min', 'priority', 'amount', 'money_kind', 'category', 'payee', 'note', 'thought_kind', 'mood', 'target', 'milestone', 'goal', 'milestones', 'mark_milestone_done', 'confidence', 'evidence'],
 };
 export const RESPONSE_SCHEMA = {
   type: 'object', additionalProperties: false,
@@ -159,7 +160,7 @@ export const RESPONSE_SCHEMA = {
 // For providers without schema-constrained decoding: spell the exact shape out in the prompt.
 export const SHAPE_HINT = `
 Return ONE JSON object and nothing else, exactly this shape (every key present, null when unknown):
-{"language":"en|te|mixed|other","clarification":null,"actions":[{"type":"task|reminder|complete|progress|goal|money|thought","title":null,"date":"YYYY-MM-DD or null","time":"HH:MM or null","duration_min":null,"priority":"low|normal|high or null","amount":null,"money_kind":"expense|income or null","category":null,"payee":null,"note":null,"thought_kind":"note|idea|journal or null","mood":null,"target":null,"milestone":null,"goal":null,"milestones":[],"mark_milestone_done":null,"confidence":0.9,"evidence":"exact words"}]}
+{"language":"en|te|mixed|other","clarification":null,"actions":[{"type":"task|reminder|complete|progress|goal|money|thought","title":null,"date":"YYYY-MM-DD or null","time":"HH:MM or null","in_minutes":null,"duration_min":null,"priority":"low|normal|high or null","amount":null,"money_kind":"expense|income or null","category":null,"payee":null,"note":null,"thought_kind":"note|idea|journal or null","mood":null,"target":null,"milestone":null,"goal":null,"milestones":[],"mark_milestone_done":null,"confidence":0.9,"evidence":"exact words"}]}
 The key is "type" (not "action_type"). Always fill "date" for anything that happens on a specific day (tasks, reminders, money).`;
 export function buildPrompt(text, compact, { shapeHint = false } = {}) {
   const user = `CONTEXT_JSON:\n${JSON.stringify(compact.prompt)}\n\nUTTERANCE:\n<<<${clip(text, MAX_TEXT)}>>>`;
@@ -207,11 +208,16 @@ export function validatePlan(raw, compact, { known = [] } = {}) {
     switch (a.type) {
       case 'task': case 'reminder': {
         const title = str(a.title, 120); if (!title) { out.dropped.push({ reason: 'task without title' }); continue; }
-        const dueTime = a.time == null ? null : isTime(a.time) ? a.time : (warnings.push('time'), null);
+        let dueTime = a.time == null ? null : isTime(a.time) ? a.time : (warnings.push('time'), null);
+        let date0 = a.date, dur = a.duration_min;
+        // "in 5 minutes": an offset from now, turned into his clock time here (the model never does clock maths)
+        let inMin = Number.isInteger(a.in_minutes) && a.in_minutes > 0 && a.in_minutes <= 10080 ? a.in_minutes : null;
+        if (inMin === null && a.type === 'reminder' && !dueTime && Number.isInteger(dur) && dur > 0 && dur <= 720) { inMin = dur; dur = null; }   // "reminder for 5 minutes"
+        if (inMin !== null) { const at = zonedNow(now.tz, new Date(Math.round((now.at + inMin * 60e3) / 60e3) * 60e3)); dueTime = at.time; date0 = at.date; }
         const g = ref(a.goal, 'goal');
         const reminder = a.type === 'reminder' ? true : !!dueTime && compact.defaultReminder;
         if (a.type === 'reminder' && !dueTime) needs.push('time');
-        d = { type: a.type, f: { title, dueDate: dateOr(a.date, now.date, warnings), dueTime, durationMin: Number.isInteger(a.duration_min) && a.duration_min > 0 && a.duration_min <= 600 ? a.duration_min : null,
+        d = { type: a.type, f: { title, dueDate: dateOr(date0, now.date, warnings), dueTime, durationMin: Number.isInteger(dur) && dur > 0 && dur <= 600 ? dur : null,
           priority: Object.hasOwn(PRIO, a.priority) ? PRIO[a.priority] : 2, reminder, goalId: g?.id || null }, labels: { goal: g?.title || null } };
         break;
       }
@@ -302,7 +308,7 @@ export function missing(d) {
 const SPLIT = /\s*(?:[;.!?]+\s+|,\s*(?:and\s+|then\s+)?|\s+(?:and then|and also|and|then|also|plus)\s+|\s+(?:ఇంకా|తర్వాత|మరియు|inka|tarvata)\s+)\s*/iu;
 const DONE_RE = /\b(done|did|finished|finish(?:ed)? off|completed|wrapped up|knocked out|sent|posted|went to|called|wrote|studied|practi[cs]ed|solved|submitted|shipped|attended|cleaned|worked on)\b|\bi(?:'ve| have) (?:done|finished|completed)\b|చేశాను|చేసాను|అయిపోయింది|పూర్తి(?: చేశాను)?|\b(chesanu|chesa|chesesa|ayipoyindi|purthi)\b/iu;
 const FUTURE_RE = /\b(will|need to|have to|should|tomorrow|later|remind)\b|రేపు/iu;
-const REMIND_RE = /^\s*(?:please\s+)?(?:remind(?: me)?|reminder|set a reminder)\b|గుర్తు\s*చేయ|\bgurthu\s*chey/iu;
+const REMIND_RE = /^\s*(?:please\s+)?(?:remind(?: me)?|reminder|set (?:a|an) (?:reminder|alarm)|alarm|notify me|ping me|alert me)\b|గుర్తు\s*చేయ|\bgurthu\s*chey/iu;
 const GOAL_RE = /\b(?:my (?:new )?goal(?: is)?|new goal|goal:|i want to .+ by)\b|లక్ష్యం/iu;
 const THOUGHT_RE = /^\s*(?:idea|note|thought|journal)\s*[:\-]|^\s*(?:i feel|i felt|feeling|i think|i wonder|i realised|i realized)\b|ఆలోచన|అనిపిస్తుంది|\banipistundi\b/iu;
 const MONEY_HINT = /\b(spent|spend|paid|pay|bought|cost|rs|inr|rupees?|bucks|got|received|credited|salary|stipend|refund|kharchu|karchu|petta(?:nu)?)\b|₹|ఖర్చు|రూపాయ|కొన్నాను|కట్టాను|వచ్చింది/iu;
@@ -316,13 +322,14 @@ export function rulesPlan(text, compact) {
   for (const s of p.learned?.payees || []) { const m = /^(.+) → (.+)$/.exec(s); if (m) memory.payees[m[1].toLowerCase()] = { name: m[1], category: m[2] }; }
   const clauses = String(text || '').split(SPLIT).map(s => s && s.trim()).filter(s => s && s.length > 1);
   const actions = [];
-  const base = { title: null, date: null, time: null, duration_min: null, priority: null, amount: null, money_kind: null, category: null, payee: null, note: null, thought_kind: null, mood: null, target: null, milestone: null, goal: null, milestones: [], mark_milestone_done: null, confidence: 0.6, evidence: '' };
+  const base = { title: null, date: null, time: null, in_minutes: null, duration_min: null, priority: null, amount: null, money_kind: null, category: null, payee: null, note: null, thought_kind: null, mood: null, target: null, milestone: null, goal: null, milestones: [], mark_milestone_done: null, confidence: 0.6, evidence: '' };
   for (const c of clauses) {
     const A = { ...base, evidence: c };
     const amt = findAmount(c);
     if (REMIND_RE.test(c)) {
-      const q = parseQuick(c, { now, wake: p.profile.wake, sleep: p.profile.sleep, goals: goalsForParse });
-      if (!q.title) continue;
+      const bare = c.replace(/^\s*(?:please\s+)?(?:set (?:a|an) (?:reminder|alarm)|alarm|notify me|ping me|alert me)\s*(?:to|for|about|that)?\s*/iu, 'remind me to ');
+      const q0 = parseQuick(bare, { now, wake: p.profile.wake, sleep: p.profile.sleep, goals: goalsForParse });
+      const q = { ...q0, title: /^(?:remind me\b|\d|$)/i.test(q0.title.trim()) ? 'Reminder' : q0.title };
       actions.push({ ...A, type: 'reminder', title: q.title, date: q.dueDate, time: q.dueTime, duration_min: q.durationMin, priority: ['low', 'normal', 'high'][q.priority - 1], goal: q.goalId, confidence: q.dueTime ? 0.8 : 0.55 });
     } else if (GOAL_RE.test(c)) {
       const title = c.replace(/\b(my (?:new )?goal(?: is)?|new goal|goal:)\s*/i, '').replace(/^\s*(to|is)\s+/i, '').trim();
