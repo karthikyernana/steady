@@ -33,6 +33,7 @@ appId: dev.karthikyernana.steady.debug
 - inputText: "Emulator check 11:58pm"
 - tapOn: { id: "qa-add" }
 - assertVisible: "Emulator check"
+- hideKeyboard
 - takeScreenshot: shots/e2e-1-today
 # Goals: a goal with one milestone
 - tapOn: { id: "tab-goals" }
@@ -53,6 +54,7 @@ appId: dev.karthikyernana.steady.debug
 - inputText: "five hundred lunch"
 - tapOn: { id: "money-add" }
 - assertVisible: ".*500.*"
+- hideKeyboard
 - takeScreenshot: shots/e2e-3-money
 # Thoughts
 - tapOn: { id: "tab-thoughts" }
