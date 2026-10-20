@@ -108,7 +108,7 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           script: |
             adb install -r android/app/build/outputs/apk/debug/app-debug.apk
-            mkdir -p shots
+            mkdir -p android/e2e/shots
             maestro test --format junit --output e2e-report.xml --debug-output maestro-debug -e EMAIL=$EMAIL android/e2e/steady.yaml || (adb logcat -d | grep -iE "steady|AndroidRuntime|okhttp|System.err" | tail -300 > logcat.txt; exit 1)
       - name: Server received the phone's data
         run: |
@@ -127,7 +127,8 @@ jobs:
           name: android-e2e
           if-no-files-found: warn
           path: |
-            shots/
+            android/e2e/shots/
+            /home/runner/.maestro/tests/
             e2e-report.xml
             logcat.txt
             dev.log

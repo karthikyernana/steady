@@ -1,69 +1,72 @@
-# End-to-end on a real Android emulator (CI job "android-e2e"): fresh install -> create account against the local
-# Steady server -> every tab -> task, goal, money (custom category), thought -> sync to the server (checked by the job).
+# End-to-end on a real Android emulator (CI job "android-e2e"): fresh install -> create an account on the local
+# Steady server -> every tab -> task, goal, money (amount in words + custom category), thought -> sync.
+# The job then checks the server really holds the phone's records. Controls are addressed by test tag (resource id).
 appId: dev.karthikyernana.steady.debug
-env:
-  EMAIL: ${EMAIL}
 ---
 - launchApp: { clearState: true }
 - tapOn: "Sign in or create account"
-- tapOn: "Email"
+- tapOn: { id: "si-email" }
 - inputText: ${EMAIL}
 - hideKeyboard
-- takeScreenshot: shots/e2e-00-email
 - tapOn: "Continue"
 - extendedWaitUntil: { visible: "New here.*", timeout: 25000 }
 - tapOn: "Your name"
 - inputText: "Karthik"
-- tapOn: "Password (8+ characters)"
+- tapOn: "Password \\(8\\+ characters\\)"
 - inputText: "correct horse 9"
 - tapOn: "Confirm password"
 - inputText: "correct horse 9"
 - hideKeyboard
 - tapOn: "Create account"
-- extendedWaitUntil: { visible: "Skip", timeout: 20000 }
+- extendedWaitUntil: { visible: { id: "guide-skip" }, timeout: 25000 }
 - takeScreenshot: shots/e2e-0-guide
-- tapOn: "Skip"
-- runFlow: { when: { visible: "Allow" }, commands: [ { tapOn: "Allow" } ] }
-- runFlow: { when: { visible: "Not now" }, commands: [ { tapOn: "Not now" } ] }
-# Today: add a task with time
-- tapOn: "Add a task… e.g. gym 7pm 45m"
+- tapOn: { id: "guide-skip" }
+- repeat:
+    times: 3
+    commands:
+      - runFlow: { when: { visible: "Allow" }, commands: [ { tapOn: "Allow" } ] }
+      - runFlow: { when: { visible: "Not now" }, commands: [ { tapOn: "Not now" } ] }
+      - runFlow: { when: { visible: "Later" }, commands: [ { tapOn: "Later" } ] }
+- takeScreenshot: shots/e2e-1a-today
+# Today: add a task with a time
+- tapOn: { id: "qa" }
 - inputText: "Emulator check 11:58pm"
-- tapOn: "Add"
+- tapOn: { id: "qa-add" }
 - assertVisible: "Emulator check"
 - takeScreenshot: shots/e2e-1-today
-# Goals
-- tapOn: "Goals"
+# Goals: a goal with one milestone
+- tapOn: { id: "tab-goals" }
 - tapOn: "Add a goal"
-- tapOn: "Goal"
+- tapOn: { id: "goal-title" }
 - inputText: "Ship Steady"
-- tapOn: "Add a milestone, e.g. ship portfolio v1"
+- tapOn: { id: "ms-new" }
 - inputText: "Emulator tested"
-- tapOn: "Add"
+- tapOn: { id: "ms-add" }
 - hideKeyboard
 - scrollUntilVisible: { element: "Save", direction: DOWN }
 - tapOn: "Save"
 - assertVisible: "0 of 1 milestones"
 - takeScreenshot: shots/e2e-2-goals
-# Money: quick add with words, then a custom category
-- tapOn: "Money"
-- tapOn: "Add… e.g. 250 lunch swiggy"
+# Money: an amount said in words
+- tapOn: { id: "tab-money" }
+- tapOn: { id: "money-quick-inline" }
 - inputText: "five hundred lunch"
-- tapOn: "Add"
-- assertVisible: "₹500"
+- tapOn: { id: "money-add" }
+- assertVisible: ".*500.*"
 - takeScreenshot: shots/e2e-3-money
 # Thoughts
-- tapOn: "Thoughts"
-- tapOn: "What's on your mind? #idea #startup"
+- tapOn: { id: "tab-thoughts" }
+- tapOn: { id: "th-text" }
 - inputText: "Emulator thought #qa"
 - hideKeyboard
-- tapOn: "Save"
-- assertVisible: "Emulator thought"
+- tapOn: { id: "th-save" }
+- assertVisible: "Emulator thought.*"
 - takeScreenshot: shots/e2e-4-thoughts
-# Insights + You
-- tapOn: "Insights"
+# Insights, then You: sync now
+- tapOn: { id: "tab-insights" }
 - assertVisible: "What I've learned about you"
 - takeScreenshot: shots/e2e-5-insights
-- tapOn: "You and settings"
+- tapOn: { id: "you-btn" }
 - assertVisible: "Sync across devices"
 - tapOn: "Sync now"
 - extendedWaitUntil: { visible: "Synced.*", timeout: 30000 }
