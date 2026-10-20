@@ -1,16 +1,105 @@
 import { all, get, save, remove, uid, meta, setMeta, local, setLocal } from '../../data/store.js';
-import { todayKey, keyAdd, fmtTime, fmtDateKey, esc, greeting, DAYS, MONTHS, toMin } from '../../core/util.js';
+import { todayKey, keyAdd, fmtTime, fmtDateKey, esc, greeting, DAYS, MONTHS, toMin, fromKey } from '../../core/util.js';
 import { parseQuick } from '../../core/parse.js';
 import { analyze, suggestTime, mvdPicks, tinyFromGoals } from '../../data/insights.js';
 import { renderDayStrip } from '../daystrip.js';
 import { ring } from '../charts.js';
 import { todayLine } from '../../core/voice.js';
 import { I } from '../icons.js';
-import { on, toast, openSheet, segmented, bindSeg, segValue, toggle, confirmSheet, requestRender } from '../ui.js';
+import { on, toast, openSheet, segmented, bindSeg, segValue, toggle, confirmSheet, requestRender, sheetOpen } from '../ui.js';
 import { reconcileNtfy, permission } from '../../platform/notify.js';
 import * as motion from '../motion.js';
+import { dayTasks, hadActivity, summaryLine, movedLabel, dayLabel, dayTitle, dayDistance, dayFromHash, hashForDay, clampDay, RANGE } from '../../core/history.js';
 
-const ui = { showDone: false, showLater: false, showRest: false };
+const ui = { showDone: false, showLater: false, showRest: false, peekYesterday: false };
+
+// ---------------- day navigation (#/today?d=YYYY-MM-DD) ----------------
+// ‹ › on the date, swipe on phones, ←/→ on desktop step through days. A past day shows what happened (js/core/history.js);
+// a future day shows what is planned. Leaving today pushes one history entry; stepping between other days replaces it,
+// so Back always returns to today.
+export const viewDay = () => dayFromHash(location.hash, todayKey()) || todayKey();
+function goDay(k) {
+  const tk = todayKey(), cur = viewDay();
+  k = clampDay(k, tk);
+  if (k === cur) return;
+  const h = hashForDay(k, tk);
+  if (cur === tk || k === tk) location.hash = h; else location.replace(h);
+}
+const stepDay = n => goDay(keyAdd(viewDay(), n));
+on('day-prev', () => stepDay(-1));
+on('day-next', () => stepDay(1));
+on('day-today', () => goDay(todayKey()));
+on('day-yesterday', () => goDay(keyAdd(todayKey(), -1)));
+on('peek-yesterday', () => { ui.peekYesterday = !ui.peekYesterday; requestRender(); });
+
+// A day change inside Today is a slide (the direction matches: a later day comes in from the right), not the app's
+// in-place re-render. Registered before app.js's hashchange listener (this module loads first), so it can take over.
+const dayOfUrl = url => { const i = String(url || '').indexOf('#'); const h = i < 0 ? '' : String(url).slice(i); return /^#\/today\b/.test(h) || h === '' || h === '#' || h === '#/' ? (dayFromHash(h, todayKey()) || todayKey()) : null; };
+addEventListener('hashchange', e => {
+  const from = dayOfUrl(e.oldURL), to = dayOfUrl(e.newURL);
+  const view = document.getElementById('view');
+  if (!from || !to || from === to || view?.dataset.route !== 'today' || !view.querySelector('.v-today')) return;
+  e.stopImmediatePropagation();
+  const dir = to > from ? 1 : -1;
+  motion.routeSwap(() => {
+    view.innerHTML = `<div class="view-inner v-today">${renderToday()}</div>`;
+    mountToday(view);
+    window.scrollTo(0, 0);
+    motion.segs(view);
+  }, dir, () => motion.rings(view, true));
+  const inner = view.querySelector('.view-inner');
+  if (inner && !motion.calm()) motion.anim(inner.querySelector('.page-head'), [{ transform: `translate3d(${dir * 28}px,0,0)`, opacity: 0.4 }, { transform: 'none', opacity: 1 }], 'gentle');
+});
+// keyboard: ←/→ when not typing, no sheet open, no modifier
+addEventListener('keydown', e => {
+  // "n" (new task) on another day: come back to today, where the composer is (app.js then focuses it)
+  if (e.key === 'n' && !e.metaKey && !e.ctrlKey && !e.altKey && viewDay() !== todayKey() && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName) && !sheetOpen() && document.querySelector('#view .v-today')) {
+    goDay(todayKey()); setTimeout(() => document.getElementById('qa')?.focus(), 80); return;
+  }
+  if ((e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey || e.defaultPrevented) return;
+  const a = document.activeElement;
+  if (/INPUT|TEXTAREA|SELECT/.test(a?.tagName) || a?.isContentEditable || sheetOpen()) return;
+  if (a?.closest?.('.chat-panel, .chat-dock, [role=slider], [role=tablist], .seg')) return;
+  if (!document.querySelector('#view .v-today')) return;
+  e.preventDefault(); stepDay(e.key === 'ArrowLeft' ? -1 : 1);
+});
+// swipe on touch: horizontal, deliberate, not from the screen edge (system back gesture), not on fields or scrollers
+let sw = null;
+addEventListener('touchstart', e => {
+  const v = e.target.closest?.('#view .v-today');
+  if (!v || e.touches.length !== 1 || sheetOpen() || e.target.closest('input, textarea, select, .chips, .ds-line, [data-noswipe]')) { sw = null; return; }
+  const p = e.touches[0];
+  if (p.clientX < 24 || p.clientX > innerWidth - 24) { sw = null; return; }
+  sw = { x: p.clientX, y: p.clientY, t: Date.now(), el: v, lock: null };
+}, { passive: true });
+addEventListener('touchmove', e => {
+  if (!sw) return;
+  const p = e.touches[0], dx = p.clientX - sw.x, dy = p.clientY - sw.y;
+  if (!sw.lock && Math.abs(dx) + Math.abs(dy) > 12) sw.lock = Math.abs(dx) > Math.abs(dy) * 1.4 ? 'x' : 'y';
+  if (sw.lock === 'x' && !motion.calm()) sw.el.style.transition = 'none', sw.el.style.transform = `translate3d(${Math.max(-60, Math.min(60, dx * 0.3))}px,0,0)`;
+}, { passive: true });
+const endSwipe = e => {
+  if (!sw) return;
+  const s = sw; sw = null;
+  const p = e.changedTouches?.[0];
+  if (s.el.style.transform) { s.el.style.transition = ''; s.el.style.transform = ''; }
+  if (!p || s.lock !== 'x') return;
+  const dx = p.clientX - s.x, dy = p.clientY - s.y;
+  if (Math.abs(dx) < 64 || Math.abs(dx) < Math.abs(dy) * 1.6 || Date.now() - s.t > 900) return;
+  stepDay(dx < 0 ? 1 : -1);          // swipe left = next day (content moves left, the later day comes in from the right)
+};
+addEventListener('touchend', endSwipe, { passive: true });
+addEventListener('touchcancel', () => { if (sw) { sw.el.style.transform = ''; sw = null; } }, { passive: true });
+
+function dayNav(k, tk) {
+  const prev = keyAdd(k, -1), next = keyAdd(k, 1), d = fromKey(k);
+  const atStart = k <= keyAdd(tk, -RANGE.back), atEnd = k >= keyAdd(tk, RANGE.forward);
+  return `<div class="day-nav" data-k="day-nav">
+    <button class="day-step" data-act="day-prev" data-testid="day-prev" aria-label="Previous day, ${esc(dayLabel(prev, tk))}" title="Previous day (←)" ${atStart ? 'disabled' : ''}>${I.left}</button>
+    <span class="eyebrow day-date" data-testid="day-eyebrow" aria-live="polite">${DAYS[d.getDay()]}, ${d.getDate()} ${MONTHS[d.getMonth()]}${d.getFullYear() !== new Date().getFullYear() ? ` ${d.getFullYear()}` : ''}</span>
+    <button class="day-step" data-act="day-next" data-testid="day-next" aria-label="Next day, ${esc(dayLabel(next, tk))}" title="Next day (→)" ${atEnd ? 'disabled' : ''}>${I.right}</button>
+  </div>`;
+}
 
 export function sortTasks(xs) {
   return [...xs].sort((a, b) => {
@@ -47,6 +136,8 @@ function settings() { return meta('settings'); }
 // ---------------- render ----------------
 export function renderToday() {
   const tk = todayKey();
+  const vd = viewDay();
+  if (vd !== tk) return renderDay(vd, tk);
   const a = analyze();
   window.__lastAnalysis = a;
   const p = profile();
@@ -65,7 +156,7 @@ export function renderToday() {
   let html = `
   <div class="page-head">
     <div>
-      <div class="eyebrow">${DAYS[d.getDay()]}, ${d.getDate()} ${MONTHS[d.getMonth()]}</div>
+      ${dayNav(tk, tk)}
       <h1 class="display">${greeting(d)}${p.name ? `, <em>${esc(p.name)}</em>` : ''}.</h1>
       <p class="sub" data-testid="today-sub">${esc(sub)}</p>
     </div>
@@ -160,23 +251,69 @@ export function renderToday() {
     html += `<section class="list-sec"><button class="disclose" data-k="d-later" data-act="toggle-later" aria-expanded="${ui.showLater}">Coming up this week · ${later.length}</button>
       ${ui.showLater ? `<ul class="tasks">${later.map(t => taskRow(t, true)).join('')}</ul>` : ''}</section>`;
   }
+  html += yesterdayRow(tasks, tk);
   return html;
 }
 
-function taskRow(t, showDate = false) {
+// "Yesterday · 3 done" at the end of Today: tap to open yesterday, the chevron peeks at it in place.
+function yesterdayRow(tasks, tk) {
+  const y = dayTasks(tasks, keyAdd(tk, -1), { today: tk });
+  if (!hadActivity(y)) return '';
+  const label = [y.done.length ? `${y.done.length} done` : null, y.skipped.length ? `${y.skipped.length} skipped` : null].filter(Boolean).join(' · ');
+  const peek = [...y.done, ...y.skipped];
+  return `<section class="list-sec yday" data-k="yday" data-testid="yesterday-row">
+    <div class="yday-row">
+      <button class="yday-go" data-act="day-yesterday" data-testid="yesterday-go" aria-label="Open yesterday: ${esc(label)}">${I.history}<span class="yday-l">Yesterday</span><span class="yday-n">${esc(label)}</span>${I.right}</button>
+      <button class="yday-peek disclose" data-act="peek-yesterday" aria-expanded="${ui.peekYesterday}" aria-label="${ui.peekYesterday ? 'Hide' : 'Show'} yesterday's tasks"></button>
+    </div>
+    ${ui.peekYesterday ? `<ul class="yday-list" data-testid="yesterday-peek">${peek.slice(0, 6).map(t => `<li class="${t.status}"><i aria-hidden="true">${t.status === 'done' ? I.check : I.skip}</i><span>${esc(t.title)}</span></li>`).join('')}${peek.length > 6 ? `<li class="more"><button class="link" data-act="day-yesterday">+${peek.length - 6} more</button></li>` : ''}</ul>` : ''}
+  </section>`;
+}
+
+// A past or future day: what happened (done, skipped, moved) or what is planned. Read-mostly: rows still un-check and edit.
+function renderDay(k, tk) {
+  const r = dayTasks(all('tasks'), k, { today: tk });
+  const past = r.kind === 'past';
+  const countable = r.done.length + r.moved.length + r.open.length;
+  const dist = dayDistance(k, tk);
+  let html = `
+  <div class="page-head day-head" data-day="${k}" data-testid="day-head">
+    <div>
+      ${dayNav(k, tk)}
+      <h1 class="display">${esc(dayTitle(k, tk))}<em>.</em></h1>
+      <p class="sub" data-testid="day-summary">${esc(summaryLine(r))}${dist ? ` <span class="day-dist">· ${dist}</span>` : ''}</p>
+      <button class="back-today" data-act="day-today" data-testid="back-today">${past ? '' : I.left}<span>Back to today</span>${past ? I.right : ''}</button>
+    </div>
+    ${past && countable ? `<div class="head-ring" data-ring="day" title="${r.done.length} done">${ring(r.done.length / Math.max(1, countable), 56)}<span>${r.done.length}</span></div>` : ''}
+  </div>`;
+  if (!r.total) {
+    html += `<section class="empty" data-testid="day-empty"><p class="serif big">${past ? 'A quiet day.' : 'Nothing planned yet.'}</p><p class="muted">${past ? 'Nothing was done or planned for this day.' : 'Add something for this day from Today, e.g. “gym ' + esc(dayLabel(k, tk).toLowerCase()) + ' 7pm”.'}</p></section>`;
+    return html;
+  }
+  if (r.open.length) html += `<section class="list-sec"><div class="sec-head" data-k="sh-day-open"><h2>Planned</h2><span class="count">${r.open.length} open</span></div><ul class="tasks" data-testid="day-open">${r.open.map(t => taskRow(t)).join('')}</ul></section>`;
+  if (r.done.length) html += `<section class="list-sec"><div class="sec-head" data-k="sh-day-done"><h2>Done</h2><span class="count">${r.done.length}</span></div><ul class="tasks done-list" data-testid="day-done">${r.done.map(t => taskRow(t, false, { doneTime: true })).join('')}</ul></section>`;
+  if (r.skipped.length) html += `<section class="list-sec"><div class="sec-head" data-k="sh-day-skip"><h2>Skipped</h2><span class="count">${r.skipped.length}</span></div><ul class="tasks done-list" data-testid="day-skipped">${r.skipped.map(t => taskRow(t, false, { noSkip: true })).join('')}</ul></section>`;
+  if (r.moved.length) html += `<section class="list-sec"><div class="sec-head" data-k="sh-day-moved"><h2>Moved on</h2><span class="count">${r.moved.length}</span></div><ul class="tasks moved-list" data-testid="day-moved">${r.moved.map(m => taskRow(m.task, false, { note: movedLabel(m, tk), noSkip: true, moved: true })).join('')}</ul></section>`;
+  return html;
+}
+
+function taskRow(t, showDate = false, o = {}) {
   const goal = t.goalId ? get('goals', t.goalId) : null;
+  const doneAt = o.doneTime && t.doneAt ? new Date(t.doneAt) : null;
   const meta = [
+    o.note ? `<span class="moved-note">${esc(o.note)}</span>` : null,
+    doneAt ? `done ${fmtTime(`${String(doneAt.getHours()).padStart(2, '0')}:${String(doneAt.getMinutes()).padStart(2, '0')}`)}` : null,
     showDate ? fmtDateKey(t.dueDate) : null,
-    t.dueTime ? `${t.reminder ? I.bell : ''}${fmtTime(t.dueTime)}` : null,
+    t.dueTime && !doneAt ? `${t.reminder ? I.bell : ''}${fmtTime(t.dueTime)}` : null,
     t.durationMin ? `${t.durationMin} min` : null,
     goal ? `<span class="goal-tag">${esc(goal.title)}</span>` : null,
-    t.carried ? 'carried over' : null,
-    t.status === 'skipped' ? 'skipped' : null,
+    t.carried && !o.moved ? 'carried over' : null,
+    t.status === 'skipped' && !o.noSkip ? 'skipped' : null,
   ].filter(Boolean);
-  return `<li class="task p${t.priority} ${t.status}" data-id="${t.id}">
+  return `<li class="task p${t.priority} ${t.status}${o.moved ? ' moved' : ''}" data-id="${t.id}">
     <button class="check" data-act="toggle" aria-label="${t.status === 'done' ? 'Mark not done' : 'Mark done'}: ${esc(t.title)}">${I.check}</button>
     <button class="t-main" data-act="edit" title="Edit"><span class="t-title">${esc(t.title)}</span>${meta.length ? `<span class="t-meta">${meta.map(m => `<span>${m}</span>`).join('')}</span>` : ''}</button>
-    ${t.status === 'open' ? `<button class="icon-btn subtle" data-act="skip" aria-label="Skip ${esc(t.title)}" title="Skip">${I.skip}</button>` : ''}
+    ${t.status === 'open' && !o.moved ? `<button class="icon-btn subtle" data-act="skip" aria-label="Skip ${esc(t.title)}" title="Skip">${I.skip}</button>` : ''}
   </li>`;
 }
 
@@ -262,7 +399,7 @@ on('lighten', async () => {
 on('carry-all', async () => {
   const tk = todayKey();
   const xs = all('tasks').filter(t => t.status === 'open' && t.dueDate < tk && !t.letGo);
-  for (const t of xs) await save('tasks', { ...t, dueDate: tk, carried: true });
+  for (const t of xs) await save('tasks', { ...t, dueDate: tk, carried: true, carriedFrom: t.carriedFrom || t.dueDate });
   reconcileNtfy();
   toast(`Brought ${xs.length} into today.`);
 });
@@ -283,7 +420,8 @@ on('carry-pick', () => {
     onMount: (b, api) => b.querySelector('[data-ok]').onclick = async () => {
       for (const cb of b.querySelectorAll('input[type=checkbox]')) {
         const t = get('tasks', cb.value);
-        if (cb.checked) await save('tasks', { ...t, dueDate: tk, carried: true });
+        if (!t) continue;                              // deleted meanwhile (another device, sync): nothing to bring
+        if (cb.checked) await save('tasks', { ...t, dueDate: tk, carried: true, carriedFrom: t.carriedFrom || t.dueDate });
         else await save('tasks', { ...t, status: 'skipped', letGo: true });
       }
       reconcileNtfy(); api.close();

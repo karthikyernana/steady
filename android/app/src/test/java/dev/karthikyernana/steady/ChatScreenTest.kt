@@ -51,13 +51,13 @@ class ChatCardsRenderTest {
 class ChatScreenTest {
     /** Ask's one rule (same as the web's js/ui/press.js). */
     @Test fun askPressRule() {
-        val h = dev.karthikyernana.steady.ui.AskPress.HOLD_MS; val r = dev.karthikyernana.steady.ui.AskPress.RELEASE_MS
-        assertEquals("tap", dev.karthikyernana.steady.ui.AskPress.outcome(120))
-        assertEquals("none", dev.karthikyernana.steady.ui.AskPress.outcome(80, cancelled = true))
-        assertEquals("keep", dev.karthikyernana.steady.ui.AskPress.outcome(h))
-        assertEquals("keep", dev.karthikyernana.steady.ui.AskPress.outcome(h + r))
-        assertEquals("stop", dev.karthikyernana.steady.ui.AskPress.outcome(h + r + 1))
-        assertEquals("stop", dev.karthikyernana.steady.ui.AskPress.outcome(8000, cancelled = true))
+        val P = dev.karthikyernana.steady.ui.AskPress; val h = P.HOLD_MS; val m = P.MIN_HOLD_MS
+        assertEquals("tap", P.outcome(120))
+        assertEquals("none", P.outcome(80, cancelled = true))
+        assertEquals("short", P.outcome(h)); assertEquals("short", P.outcome(m - 1))
+        assertEquals("send", P.outcome(m - 1, heard = true)); assertEquals("send", P.outcome(m))
+        assertEquals("cancel", P.outcome(4000, outside = true))
+        assertEquals("send", P.outcome(8000, cancelled = true))      // past the hold, a lost gesture still sends (web parity)
     }
 
     @get:Rule val rule = createAndroidComposeRule<MainActivity>()
@@ -87,14 +87,15 @@ class ChatScreenTest {
         rule.onNodeWithText("Chat needs your account").assertExists()
         rule.onNodeWithTag("chat-composer").assertExists()
         rule.onNodeWithTag("chat-send").assertHasClickAction()
-        // every control sits in the bottom thumb zone; the header holds only the title
-        for (t in listOf("chat-hist-btn", "chat-new", "chat-close", "chat-mic", "chat-send", "chat-input")) {
+        // the composer sits in the bottom thumb zone; History · New · Close are icon buttons in the header (as the web)
+        for (t in listOf("chat-mic", "chat-send", "chat-input")) {
             val b = rule.onNodeWithTag(t, useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
             assertTrue("$t in the thumb zone: $b (screen ${root.bottom})", b.top > root.bottom * 0.75f)
         }
         val head = rule.onNodeWithTag("chat-head").fetchSemanticsNode().boundsInRoot
         assertTrue(head.bottom < root.bottom * 0.25f)
-        assertEquals(0, rule.onAllNodes(hasClickAction() and hasAnyAncestor(hasTestTag("chat-head"))).fetchSemanticsNodes().size)
+        for (t in listOf("chat-hist-btn", "chat-new", "chat-close")) rule.onNode(hasTestTag(t) and hasAnyAncestor(hasTestTag("chat-head"))).assertHasClickAction()
+        rule.onNode(hasText("Steady") and hasAnyAncestor(hasTestTag("chat-head"))).assertExists()
         rule.onNodeWithTag("ask-fab").assertDoesNotExist()                      // nothing floats over the composer
         // the composer mic dictates; signed out it says so instead of opening the capture sheet
         rule.onNodeWithTag("chat-mic").performClick(); rule.waitForIdle()
@@ -129,7 +130,11 @@ class ChatScreenTest {
         web.push("money", buildJsonObject { put("id", "cm2"); put("kind", "expense"); put("amount", 60); put("category", "Transport"); put("date", today); put("updatedAt", now); put("createdAt", now) })
         rule.onNodeWithTag("tab-today").performClick(); rule.onNodeWithTag("ask-fab").performClick(); rule.waitForIdle()
         rule.onNodeWithTag("chat-blocked").assertDoesNotExist()
-        rule.onNodeWithTag("chat-suggest-0").performClick()
+        // the empty chat's chips come from the server's starter (1.6) or the built-in set; ask the same question either way
+        waitTag("chat-suggest-0")
+        val q = "Spending by category this month"
+        if (rule.onAllNodesWithText(q).fetchSemanticsNodes().isNotEmpty()) rule.onNodeWithText(q).performClick()
+        else { rule.onNodeWithTag("chat-input").performTextInput(q); rule.onNodeWithTag("chat-send").performClick() }
         waitTag("card-stat")
         rule.onNodeWithTag("cc-value", useUnmergedTree = true).assertTextEquals("₹400")      // computed by the server from the two rows
         rule.onNodeWithTag("card-donut").assertExists()

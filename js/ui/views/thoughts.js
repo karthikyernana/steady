@@ -20,7 +20,16 @@ function boldHTML(text, spans) {
   }
   return out + linkTags(text.slice(i));
 }
+// Memoised by text: the list re-renders on every search keystroke and sync, and long pasted answers cost ~1 ms per KB.
+const rdCache = new Map();
 export function readableHTML(text) {
+  const hit = rdCache.get(text); if (hit !== undefined) return hit;
+  const html = buildReadable(text);
+  if (rdCache.size > 400) rdCache.delete(rdCache.keys().next().value);
+  rdCache.set(text, html);
+  return html;
+}
+function buildReadable(text) {
   if (!fancy(text)) return linkTags(text);
   return lines(text).map(l => {
     const inner = boldHTML(l.text, l.bold);
@@ -31,7 +40,12 @@ export function readableHTML(text) {
   }).join('\n');
 }
 // long = more than ~7 lines on a phone: clamp to 7 with Show more (same rule as Android's ThoughtBody)
-const isLong = text => { const b = plainBody(text); return b.length > 380 || (b.match(/\n/g) || []).length > 7; };
+const longCache = new Map();
+const isLong = text => {
+  let v = longCache.get(text);
+  if (v === undefined) { const b = plainBody(text); v = b.length > 380 || (b.match(/\n/g) || []).length > 7; if (longCache.size > 400) longCache.delete(longCache.keys().next().value); longCache.set(text, v); }
+  return v;
+};
 const timeOf = t => { const d = new Date(t.createdAt); return fmtTime(`${pad(d.getHours())}:${pad(d.getMinutes())}`); };
 
 

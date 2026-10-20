@@ -1,15 +1,17 @@
 // Steady service worker: offline app shell (network-first, cache fallback) + Web Push + notification clicks.
-const VERSION = 'steady-v1.5.0-r1';
+const VERSION = 'steady-v1.6.0-r1';
 const SHELL = [
   './',
   './index.html',
   './manifest.webmanifest',
   './css/app.css',
   './css/styles.css',
+  './css/history.css',
   './js/app.js',
   './js/core/agent.js',
   './js/core/chat-ui.js',
   './js/core/engine.js',
+  './js/core/history.js',
   './js/core/merge.js',
   './js/core/money.js',
   './js/core/overview.js',
@@ -27,6 +29,7 @@ const SHELL = [
   './js/data/sync.js',
   './js/platform/notify.js',
   './js/ui/cards.js',
+  './js/ui/chat-fx.js',
   './js/ui/charts.js',
   './js/ui/daystrip.js',
   './js/ui/guide.js',
@@ -45,9 +48,6 @@ const SHELL = [
   './js/ui/views/today.js',
   './fonts/host-grotesk-latin-wght-normal.woff2',
   './fonts/host-grotesk-latin-ext-wght-normal.woff2',
-  './fonts/inter-latin-wght-normal.woff2',
-  './fonts/instrument-serif-latin-400-normal.woff2',
-  './fonts/instrument-serif-latin-400-italic.woff2',
   './fonts/schibsted-grotesk-latin-wght-normal.woff2',
   './fonts/ibm-plex-mono-latin-500-normal.woff2',
   './fonts/young-serif-latin-400-normal.woff2',

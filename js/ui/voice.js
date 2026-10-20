@@ -14,7 +14,7 @@ import { fmtINR, DEFAULT_CATEGORIES, INCOME_CATEGORIES, canonicalCategory } from
 import { knownCategories } from './views/money.js';
 import { reconcileNtfy, rearmLocal } from '../platform/notify.js';
 import * as motion from './motion.js';
-import { HOLD_MS, releaseOutcome } from './press.js';
+import { HOLD_MS, releaseOutcome, isOutside } from './press.js';
 
 const TUNE = window.__steadyVoiceTune || {};   // test hook (shorter segments in e2e); unset in normal use
 const MAX_MS = TUNE.max || 120_000, SEG_MS = TUNE.seg || 25_000, SILENCE_MS = TUNE.silence || 3200, MIN_SPEECH_MS = 450;
@@ -26,40 +26,85 @@ const voiceSupported = () => !!(navigator.mediaDevices?.getUserMedia && window.M
 export const voiceReady = () => voiceSupported() && cloudReady() && !!cfg.agent?.voice && navigator.onLine;
 
 // ---------------------------------------------------------------- the button (part of the app shell)
-// "Ask": the one floating button. TAP opens Chat (onTap). PRESS AND HOLD is the voice agent, exactly as before: the
-// capture sheet opens and records while the finger is down (a pause never ends it), releasing finishes, then
-// transcript → drafts → Accept. A hold let go of very quickly keeps listening hands-free (Done, or a pause, finishes).
+// "Ask": the one floating button. TAP opens Chat (onTap). PRESS AND HOLD records in the button itself: no sheet while
+// your finger is down (it would sit right under it). The button grows, turns the recording colour, shows a live level
+// ring and the elapsed time, a "Release to send" note sits ABOVE it and the page dims a little. Letting go sends: the
+// sheet opens on "Transcribing…", then shows what you said and the drafts (Accept) exactly as before. Slide more than
+// CANCEL_PX away and it says "Release to cancel"; a fumbled hold (< MIN_HOLD_MS, nothing heard) is cancelled with a
+// gentle "Hold to talk". If the browser's mic permission prompt interrupts the first hold, nothing starts recording on
+// its own: a note says to hold again.
 const isDown = () => !!document.querySelector('.guide, .onboarding') || sheetOpen();
 export const askButton = () => `<button class="ask-fab" id="ask-fab" type="button" data-testid="ask" aria-label="Ask about your data. Press and hold to talk to Steady" aria-keyshortcuts="V" title="Tap to ask · Hold to talk (V)">
   <span class="ask-ring" aria-hidden="true"></span>${I.ask}<span class="ask-label" aria-hidden="true">Ask</span></button>`;
+function recUi(b) {
+  let dim = document.getElementById('ask-dim'), note = document.getElementById('ask-rec-note');
+  if (!dim) { dim = document.createElement('div'); dim.id = 'ask-dim'; dim.className = 'ask-dim'; dim.setAttribute('aria-hidden', 'true'); document.body.appendChild(dim); }
+  if (!note) { note = document.createElement('div'); note.id = 'ask-rec-note'; note.className = 'ask-rec-note'; note.dataset.testid = 'ask-rec-note'; note.setAttribute('role', 'status'); document.body.appendChild(note); }
+  const place = () => { const r = b.getBoundingClientRect(); note.style.right = `${Math.max(8, Math.round(innerWidth - r.right))}px`; note.style.bottom = `${Math.round(innerHeight - r.top + 24)}px`; };
+  return { dim, note, place };
+}
 export function mountAsk(root = document, { onTap } = {}) {
   const b = root.querySelector('#ask-fab'); if (!b || b.dataset.bound) return;
   b.dataset.bound = '1';
-  let timer = 0, down = false, heldAt = 0, lastUp = -1e9;
+  const label = b.querySelector('.ask-label');
+  let timer = 0, down = false, heldAt = 0, lastUp = -1e9, x0 = 0, y0 = 0, outside = false, rec = null, noteT = 0;
+  const ui = recUi(b);
   const tap = () => { hideHint(); onTap?.(); };
+  const say = (text, cls = '') => { clearTimeout(noteT); ui.place(); ui.note.textContent = text; ui.note.className = `ask-rec-note show ${cls}`; };
+  const unsay = (ms = 0) => { clearTimeout(noteT); noteT = setTimeout(() => { ui.note.className = 'ask-rec-note'; }, ms); };
+  const look = on => {
+    b.classList.toggle('recording', on); document.documentElement.classList.toggle('ask-rec', on);
+    if (!on) { b.classList.remove('outside'); b.style.removeProperty('--lvl'); label.textContent = 'Ask'; b.removeAttribute('aria-live'); }
+  };
   const fire = () => {
     timer = 0; heldAt = performance.now();
-    b.classList.remove('arming'); b.classList.add('holding');
+    b.classList.remove('arming', 'pressed'); b.classList.add('holding');
     navigator.vibrate?.(10); hideHint(); setLocal('askHeld', true);
-    openVoice();
-    if (S) S.holding = true;        // while the finger is down, a pause never ends the recording
+    rec = holdVoice({
+      level: (v, ms) => {                                   // every frame while recording: transform-only level + the time
+        b.style.setProperty('--lvl', v.toFixed(3));
+        const t = `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
+        if (label.textContent !== t) label.textContent = t;
+      },
+      live: () => { look(true); say(outside ? 'Release to cancel' : 'Release to send', outside ? 'out' : ''); },
+    });
+    if (!rec) { b.classList.remove('holding'); openVoice(); return; }   // no voice here (signed out, offline…): the sheet explains
+    look(true); say('Release to send');
   };
   b.addEventListener('pointerdown', e => {
     if (e.button > 0 || sheetOpen()) return;
-    down = true; heldAt = 0;
+    down = true; heldAt = 0; outside = false; x0 = e.clientX; y0 = e.clientY;
     try { b.setPointerCapture(e.pointerId); } catch { /* synthetic */ }
     b.classList.add('pressed', 'arming');
     clearTimeout(timer); timer = setTimeout(fire, HOLD_MS);
   });
+  const move = e => {
+    if (!down || !heldAt || !rec) return;
+    const out = isOutside(e.clientX - x0, e.clientY - y0);
+    if (out === outside) return;
+    outside = out; b.classList.toggle('outside', out);
+    say(out ? 'Release to cancel' : 'Release to send', out ? 'out' : '');
+    navigator.vibrate?.(6);
+  };
+  b.addEventListener('pointermove', move); addEventListener('pointermove', move, { capture: true, passive: true });
   const up = cancel => {
     if (!down) return; down = false; lastUp = performance.now();
     b.classList.remove('pressed', 'arming', 'holding');
-    if (timer) { clearTimeout(timer); timer = 0; if (releaseOutcome(0, cancel) === 'tap') tap(); return; }    // released before the hold: a tap
-    if (S) S.holding = false;
-    if (releaseOutcome(HOLD_MS + performance.now() - heldAt) === 'stop' && S?.phase === 'listening') stopRecording();   // hold-to-talk: release = done
+    if (timer) { clearTimeout(timer); timer = 0; if (releaseOutcome(0, { cancelled: cancel }) === 'tap') tap(); return; }    // released before the hold: a tap
+    const r = rec; rec = null;
+    look(false);
+    if (!r) { unsay(); return; }
+    const out = releaseOutcome(HOLD_MS + performance.now() - heldAt, { cancelled: cancel, outside, heard: r.heard() });
+    if (r.failed()) { unsay(); r.explain(); return; }       // the mic is blocked or busy: the sheet says so (and offers typing)
+    if (out === 'send' && !r.recording()) {               // the mic never started (a permission prompt took the hold)
+      r.cancel(); say(r.asked() ? 'Mic is on. Now hold Ask to talk.' : 'Hold to talk', 'tip'); unsay(2600); return;
+    }
+    if (out === 'send') { unsay(); r.send(); return; }
+    r.cancel();
+    if (out === 'short') { say('Hold to talk', 'tip'); unsay(1800); } else { say('Cancelled', 'tip'); unsay(1200); }
   };
   b.addEventListener('pointerup', () => up(false)); b.addEventListener('pointercancel', () => up(true));
-  // if the button loses the pointer (a sheet or permission prompt took it), the finger lifting anywhere still counts
+  // if the button loses the pointer (a permission prompt took it), the finger lifting anywhere still counts
   addEventListener('pointerup', () => up(false), true); addEventListener('pointercancel', () => up(true), true);
   addEventListener('blur', () => up(true));
   // the click Chrome sends after a long press lands on whatever is under the finger (the new sheet): swallow it
@@ -69,7 +114,10 @@ export function mountAsk(root = document, { onTap } = {}) {
   b.addEventListener('click', e => { e.preventDefault(); if (down || performance.now() - lastUp < 700 || sheetOpen()) return; tap(); });
   // tuck away while reading down a page (so it never sits on top of an amount), back as soon as you scroll up
   let lastY = scrollY;
+  const wide = matchMedia('(min-width: 960px)');          // desktop: the button sits beside the content, so it never tucks
   addEventListener('scroll', () => {
+    if (down) return;
+    if (wide.matches) { b.classList.remove('tucked'); lastY = scrollY; return; }
     const y = scrollY, atEnd = innerHeight + y >= document.documentElement.scrollHeight - 40;
     if (Math.abs(y - lastY) < 8 && !atEnd) return;
     b.classList.toggle('tucked', y > lastY && y > 60 && !atEnd);
@@ -107,11 +155,38 @@ export function openVoice({ mode } = {}) {
   if (dictate && (mode === 'type' || !voiceReady())) { dictate(null, whyTyping(mode).replace(/ ?(Type it instead\.|Typing works( now)?\.|Type it; this device will understand\.|or type here\.)$/, '').trim()); return; }
   const useVoice = mode !== 'type' && voiceReady();
   S = { phase: 'idle', drafts: [], originals: {}, undo: [], pairs: [], text: '', meta: null, dictate };
-  const api = openSheet({ title: dictate ? 'Speak your question' : 'Tell Steady', cls: 'voice-sheet', body: '<div class="vx" id="vx" data-testid="voice-sheet"></div>',
-    onMount: (b) => { S.root = b.querySelector('#vx'); b.addEventListener('click', onClick); b.addEventListener('submit', onSubmit); } });
-  S.api = api;
-  api.onClose = () => finish(true);
+  ensureSheet(S);
   if (useVoice) startRecording(); else renderTyping(whyTyping(mode));
+}
+// The sheet, opened when a session first has something to show (at once for V / the mic; on release for a hold).
+function ensureSheet(s) {
+  if (s.api) return;
+  const api = openSheet({ title: s.dictate ? 'Speak your question' : 'Tell Steady', cls: 'voice-sheet', body: '<div class="vx" id="vx" data-testid="voice-sheet"></div>',
+    onMount: (b) => { s.root = b.querySelector('#vx'); b.addEventListener('click', onClick); b.addEventListener('submit', onSubmit); } });
+  s.api = api;
+  api.onClose = () => finish(true);
+}
+/** Hold-to-talk on the Ask button: record with no sheet; the button shows it (hooks.level, hooks.live). Null when voice
+ * can't run here (the caller opens the sheet, which explains why). */
+export function holdVoice(hooks = {}) {
+  if (S || !voiceReady() || micTarget) return null;
+  const s = S = { phase: 'idle', drafts: [], originals: {}, undo: [], pairs: [], text: '', meta: null, dictate: null, hold: true, holding: true, heardMs: 0, hooks, perm: null };
+  navigator.permissions?.query?.({ name: 'microphone' }).then(p => { s.perm = p.state; }).catch(() => {});
+  startRecording();
+  return {
+    heard: () => s.heardMs > MIN_SPEECH_MS,
+    recording: () => !!s.stream && S === s && s.phase === 'listening',
+    asked: () => s.perm === 'prompt',
+    failed: () => !!s.micErr,
+    explain: () => { if (S !== s) return; s.holding = false; s.hooks = {}; renderTyping(s.micErr); },
+    send: () => { if (S !== s) return; s.holding = false; s.hooks = {}; if (s.phase === 'listening') stopRecording(); },
+    cancel: () => {        // throw the recording away: no sheet, no transcription, the mic is released
+      if (S !== s) return;
+      s.gen = (s.gen || 0) + 1; s.hooks = {}; cancelAnimationFrame(s.raf);
+      if (s.rec && s.rec.state !== 'inactive') { s.rec.onstop = null; s.rec.stop(); }
+      releaseMic(s); S = null;
+    },
+  };
 }
 function whyTyping(mode) {
   if (mode === 'type') return '';
@@ -123,7 +198,10 @@ function whyTyping(mode) {
 }
 const $ = sel => S?.root?.querySelector(sel);
 function set(state, html) {
-  if (!S?.root) return; S.phase = state; S.root.dataset.state = state; S.root.innerHTML = html;
+  if (!S) return;
+  if (!S.root) { if (S.hold && state === 'listening') { S.phase = state; return; } ensureSheet(S); }   // a hold shows in the button until it is let go
+  if (!S.root) return;
+  S.phase = state; S.root.dataset.state = state; S.root.innerHTML = html;
   S.root.querySelectorAll('textarea').forEach(grow);
 }
 const grow = ta => { ta.style.height = 'auto'; ta.style.height = `${Math.min(ta.scrollHeight + 2, 220)}px`; };
@@ -161,7 +239,8 @@ async function startRecording() {
   let stream;
   try { stream = await getMic(); }
   catch (e) {
-    if (S === s && s.gen === gen) renderTyping(e.name === 'NotAllowedError' ? 'Microphone access is blocked for Steady. Allow it in the browser’s site settings, or type here.' : 'The microphone is busy right now. Type it, or try again in a second.');
+    const msg = e.name === 'NotAllowedError' ? 'Microphone access is blocked for Steady. Allow it in the browser’s site settings, or type here.' : 'The microphone is busy right now. Type it, or try again in a second.';
+    if (S === s && s.gen === gen) { if (s.hold && s.holding) s.micErr = msg; else renderTyping(msg); }   // a hold explains on release, never under the finger
     return;
   }
   if (!live(s, gen)) { stream.getTracks().forEach(t => t.stop()); return; }
@@ -170,6 +249,7 @@ async function startRecording() {
   s.t0 = performance.now();
   startSegment(s, gen);
   navigator.vibrate?.(8);
+  s.hooks?.live?.();
   meter(s, gen);
 }
 function startSegment(s, gen) {
@@ -207,7 +287,9 @@ function meter(s, gen) {
     const speakTh = Math.max(0.018, floor * 3), quietTh = Math.max(0.01, floor * 1.8);
     if (rms > speakTh) { speechMs += dt; quietSince = 0; }
     else { if (rms < quietTh) quietSince ||= now; floor = floor * 0.97 + Math.min(rms, 0.05) * 0.03; }
-    const heard = speechMs > MIN_SPEECH_MS;
+    const heard = speechMs > MIN_SPEECH_MS; s.heardMs = speechMs;
+    s.lvl = (s.lvl || 0) * 0.7 + Math.min(1, Math.sqrt(rms) * 2.4) * 0.3;     // smoothed 0–1 voice level for the button
+    s.hooks?.level?.(s.lvl, el);
     const quietFor = quietSince ? now - quietSince : 0;
     const hint = $('#vx-hint');
     if (hint && heard && !s.holding) {

@@ -12,6 +12,17 @@ const SYMBOLS = [
   ['\\Rightarrow', '⇒'], ['\\log', 'log'], ['\\ln', 'ln'], ['\\sqrt', '√'], ['\\sum', 'Σ'], ['\\alpha', 'α'], ['\\beta', 'β'],
   ['\\theta', 'θ'], ['\\lambda', 'λ'], ['\\mu', 'μ'], ['\\pi', 'π'], ['\\sigma', 'σ'], ['\\Delta', 'Δ'], ['\\ldots', '…'], ['\\dots', '…'],
   ['\\cdots', '⋯'], ['\\in', '∈'], ['\\lfloor', '⌊'], ['\\rfloor', '⌋'], ['\\lceil', '⌈'], ['\\rceil', '⌉'], ['\\%', '%'], ['\\,', ' '], ['\\;', ' '], ['\\!', ''],
+  // web extras (pasted AI answers): relations, sets, logic, more Greek, spacing
+  ['\\lt', '<'], ['\\gt', '>'], ['\\equiv', '≡'], ['\\sim', '∼'], ['\\propto', '∝'], ['\\mid', '|'], ['\\notin', '∉'],
+  ['\\subseteq', '⊆'], ['\\supseteq', '⊇'], ['\\subset', '⊂'], ['\\supset', '⊃'], ['\\cup', '∪'], ['\\cap', '∩'], ['\\emptyset', '∅'],
+  ['\\varnothing', '∅'], ['\\setminus', '∖'], ['\\forall', '∀'], ['\\exists', '∃'], ['\\neg', '¬'], ['\\lnot', '¬'], ['\\land', '∧'],
+  ['\\lor', '∨'], ['\\wedge', '∧'], ['\\vee', '∨'], ['\\oplus', '⊕'], ['\\iff', '⇔'], ['\\implies', '⇒'], ['\\Leftarrow', '⇐'],
+  ['\\Leftrightarrow', '⇔'], ['\\leftrightarrow', '↔'], ['\\mapsto', '↦'], ['\\uparrow', '↑'], ['\\downarrow', '↓'], ['\\prod', 'Π'], ['\\int', '∫'],
+  ['\\partial', '∂'], ['\\nabla', '∇'], ['\\circ', '∘'], ['\\ast', '∗'], ['\\star', '⋆'], ['\\bullet', '•'], ['\\vdots', '⋮'], ['\\ll', '≪'], ['\\gg', '≫'],
+  ['\\gamma', 'γ'], ['\\delta', 'δ'], ['\\epsilon', 'ε'], ['\\varepsilon', 'ε'], ['\\eta', 'η'], ['\\kappa', 'κ'], ['\\rho', 'ρ'], ['\\tau', 'τ'],
+  ['\\phi', 'φ'], ['\\varphi', 'φ'], ['\\chi', 'χ'], ['\\psi', 'ψ'], ['\\omega', 'ω'], ['\\zeta', 'ζ'], ['\\xi', 'ξ'], ['\\nu', 'ν'],
+  ['\\Gamma', 'Γ'], ['\\Theta', 'Θ'], ['\\Lambda', 'Λ'], ['\\Sigma', 'Σ'], ['\\Pi', 'Π'], ['\\Phi', 'Φ'], ['\\Omega', 'Ω'],
+  ['\\quad', ' '], ['\\qquad', ' '], ['\\ ', ' '], ['\\:', ' '], ['\\#', '#'], ['\\&', '&'], ['\\_', '_'], ['\\$', '$'],
 ];
 const reEsc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const SYMBOL_RX = SYMBOLS.map(([k, v]) => [new RegExp(reEsc(k) + '(?![A-Za-z])', 'g'), v]);
@@ -22,18 +33,46 @@ const has = (map, c) => Object.prototype.hasOwnProperty.call(map, c);
 const script = (s, map, mark) => ([...s].every(c => has(map, c)) ? [...s].map(c => map[c]).join('') : `${mark}(${s})`);
 
 /** One piece of math, without its delimiters. */
-export function math(src) {
+// a fraction part that is more than one token keeps its grouping: \frac{a+b}{2} → (a+b)/2, \frac{a}{b} → a/b
+const part = g => (/^√?[\w.′⁰¹²³⁴⁵⁶⁷⁸⁹ⁿ₀₁₂₃₄₅₆₇₈₉ᵢⱼₖₙₘ]+$|^\(.*\)$|^√\(.*\)$/u.test(g.trim()) ? g.trim() : `(${g.trim()})`);
+const ACCENT = /\\(?:hat|bar|overline|underline|vec|tilde|widehat|widetilde|dot|ddot|boldsymbol|mathcal|mathbb|mathfrak|mathsf|mathtt|textbf|textit|emph|displaystyle|textstyle)\{([^{}]*)\}/g;
+
+/** One piece of math, without its delimiters. */
+export function math(src, { bare = false } = {}) {
   let s = String(src);
-  s = s.replace(/\\(?:text|mathrm|mathbf|mathit|operatorname)\{([^{}]*)\}/g, '$1');
-  s = s.replace(/\\frac\{([^{}]*)\}\{([^{}]*)\}/g, '$1/$2');
-  s = s.replace(/\\sqrt\{([^{}]*)\}/g, '√($1)');
+  s = s.replace(/\\(?:begin|end)\{[a-z*]+\}(\{[^{}]*\})?/g, ' ').replace(/\\\\(\[[^\]]*\])?/g, '\n').replace(/(^|[^\\])&/g, '$1 ');
+  s = s.replace(/\\(?:left|right|big|Big|bigg|Bigg)(?![A-Za-z])\s*(\\[{}|]|[()[\]|.])?/g, (_, d) => (d === '.' || !d ? '' : d));
+  s = s.replace(/\\(?:displaystyle|textstyle|limits|nolimits)(?![A-Za-z])/g, '');
+  // innermost groups first, so \frac{\sqrt{x}}{2} and \sqrt{\frac{a}{b}} resolve too
+  for (let i = 0, prev = ''; i < 6 && prev !== s; i++) {
+    prev = s;
+    s = s.replace(/\\(?:text|mathrm|mathbf|mathit|operatorname)\{([^{}]*)\}/g, '$1');
+    s = s.replace(ACCENT, '$1');
+    s = s.replace(/\\[dt]?frac\{([^{}]*)\}\{([^{}]*)\}/g, (_, a, b) => `${part(a)}/${part(b)}`);
+    s = s.replace(/\\binom\{([^{}]*)\}\{([^{}]*)\}/g, 'C($1, $2)');
+    s = s.replace(/\\pmod\{([^{}]*)\}/g, ' (mod $1)');
+    s = s.replace(/\\sqrt\[([^\]]*)\]\{([^{}]*)\}/g, (_, n, g) => `${{ 3: '∛', 4: '∜' }[n.trim()] || `${n}√`}${/^\w+$/.test(g.trim()) ? g.trim() : `(${g})`}`);
+    s = s.replace(/\\sqrt\{([^{}]*)\}/g, (_, g) => (/^\w+$/.test(g.trim()) ? `√${g.trim()}` : `√(${g})`));
+  }
+  s = s.replace(/\\bmod(?![A-Za-z])/g, ' mod ');
   for (const [rx, v] of SYMBOL_RX) s = s.replace(rx, () => v);
   s = s.replace(/\^\{([^{}]*)\}/g, (_, g) => script(g.trim(), SUP, '^'));
-  s = s.replace(/\^([0-9A-Za-z+-])/g, (_, g) => script(g, SUP, '^'));
+  // outside delimiters only digits count (2^5, x_1): snake_case and the like stay as typed
+  s = s.replace(bare ? /\^([0-9])/g : /\^([0-9A-Za-z+-])/g, (_, g) => script(g, SUP, '^'));
   s = s.replace(/_\{([^{}]*)\}/g, (_, g) => script(g.trim(), SUB, '_'));
-  s = s.replace(/_([0-9a-z])/g, (_, g) => script(g, SUB, '_'));
+  s = s.replace(bare ? /(?<=[A-Za-z])_([0-9])(?![\w])/g : /_([0-9a-z])/g, (_, g) => script(g, SUB, '_'));
   s = s.split('\\{').join('{').split('\\}').join('}').replace(/\\([A-Za-z]+)/g, '$1');
-  return s.replace(/[ \t]{2,}/g, ' ').trim();
+  return s.replace(/[ \t]{2,}/g, ' ').replace(/ *\n */g, '\n').trim();
+}
+
+// LaTeX pasted without delimiters ("N \le 10^{5}", "\frac{a+b}{2}"): only commands Steady knows are rewritten, so a
+// Windows path or a stray backslash stays exactly as typed.
+const BARE_CMD = new RegExp(`\\\\(?:${[...new Set(SYMBOLS.map(([k]) => k.slice(1)).filter(k => /^[A-Za-z]{2,}$/.test(k)))].join('|')}|frac|dfrac|tfrac|sqrt|binom|text|mathrm|mathbf|mathcal|mathbb|operatorname|left|right)(?![A-Za-z])`);
+function bare(line) {
+  if (!BARE_CMD.test(line)) return line;
+  // rewrite each run that starts at a known command and runs to the end of its math-looking stretch (no sentence words)
+  return line.replace(/(?:\b[\w(]{1,40}\s?)?\\[A-Za-z]+(?:\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}|\[[^\]]*\]|[\s\w^_{}()+\-*/=<>,.|!']|\\[A-Za-z]+)*/g,
+    m => (BARE_CMD.test(m) ? math(m, { bare: true }).replace(/\n/g, ' ') + (/\s$/.test(m) ? ' ' : '') : m));
 }
 
 /** Replace every math span in running text. */
@@ -45,7 +84,7 @@ export function inline(src) {
   // $…$ only when it clearly is math (has a backslash, ^ or _), so "₹500 and $20" stays untouched
   s = s.replace(/(?<![\w$])\$([^$\n]{1,120}?)\$(?![\w$])/g, (m, g) => (/[\\^_]/.test(g) ? math(g) : m));
   s = s.replace(/`([^`\n]+)`/g, '$1');
-  return s;
+  return s.includes('\\') ? s.split('\n').map(bare).join('\n') : s;
 }
 
 function boldSpans(src) {

@@ -47,7 +47,7 @@ import dev.karthikyernana.steady.data.bool
  * is written until you accept a card. Telugu, English, or both mixed.
  */
 @Composable
-fun VoiceSheet(onClose: () -> Unit, hold: dev.karthikyernana.steady.ui.HoldState? = null) {
+fun VoiceSheet(onClose: () -> Unit, heard: List<ByteArray>? = null) {
     val c = LocalCtx.current
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -111,7 +111,7 @@ fun VoiceSheet(onClose: () -> Unit, hold: dev.karthikyernana.steady.ui.HoldState
                     val quietMs = if (quietSince == 0L) 0L else now - quietSince
                     when {
                         recorder.turnMs >= 120_000 -> { stopRec(); break }
-                        spoke && quietMs >= 1_800 && hold?.down != true -> { stopRec(); break }      // holding Ask: a pause never ends it
+                        spoke && quietMs >= 1_800 -> { stopRec(); break }
                         recorder.pieceMs >= 28_000 || (recorder.pieceMs >= 24_000 && quietMs >= 300) -> recorder.rotate()
                     }
                     delay(80)
@@ -120,15 +120,15 @@ fun VoiceSheet(onClose: () -> Unit, hold: dev.karthikyernana.steady.ui.HoldState
         } catch (e: Exception) { err = "Couldn't start the microphone."; phase = "idle" }
     }
     val micPerm = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok -> if (ok) startRec() else err = "Steady needs the microphone to hear you. You can type instead." }
-    // opened by holding Ask: start listening at once (signed out it's the typing sheet, as before); letting go finishes
-    LaunchedEffect(hold) {
-        if (hold != null && signedIn && phase == "idle") {
-            if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) startRec()
-            else { hold.down = false; micPerm.launch(Manifest.permission.RECORD_AUDIO) }
-        }
+    // opened by letting go of Ask after a hold: what it recorded is written down here ("thinking"), then planned into drafts
+    LaunchedEffect(heard) {
+        val pieces = heard ?: return@LaunchedEffect
+        phase = "thinking"; transcript = ""; err = null
+        try {
+            val parts = pieces.map { agent.transcribe(it, "audio/mp4").trim() }.filter { it.isNotEmpty() }
+            if (parts.isEmpty()) { phase = "idle"; err = "I didn't catch that. Hold Ask and try again, or type it." } else plan(parts.joinToString(" "))
+        } catch (e: ApiError) { err = e.message; phase = "idle" }
     }
-    LaunchedEffect(hold?.finish) { if (hold?.finish == true && phase == "rec") stopRec() }
-
     SSheet(::finish, "Tell Steady") {
         when (phase) {
             "idle", "rec" -> {
@@ -160,9 +160,10 @@ fun VoiceSheet(onClose: () -> Unit, hold: dev.karthikyernana.steady.ui.HoldState
                 }
             }
             "thinking" -> {
-                if (transcript.isNotEmpty()) Text("“$transcript”", style = Type.h3, color = P.ink2)
+                if (transcript.isNotEmpty()) Text("“$transcript”", style = Type.h3, color = P.ink2, modifier = Modifier.testTag("voice-heard-text"))
                 Spacer(Modifier.height(16.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) { CircularProgressIndicator(Modifier.size(20.dp), color = P.accent, strokeWidth = 2.dp); Spacer(Modifier.width(10.dp)); Text("Understanding…", style = Type.body, color = P.muted) }
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.testTag("voice-thinking")) { CircularProgressIndicator(Modifier.size(20.dp), color = P.accent, strokeWidth = 2.dp); Spacer(Modifier.width(10.dp))
+                    Text(if (transcript.isEmpty()) "Writing down what you said…" else "Understanding…", style = Type.body, color = P.muted) }
             }
             "drafts" -> {
                 // what was heard, editable: fix a word and run it again

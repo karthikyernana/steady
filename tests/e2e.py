@@ -111,7 +111,7 @@ def ui_audit(pg, label):
       const issues = [];
       const vw = document.documentElement.clientWidth;
       if (document.documentElement.scrollWidth > vw + 1) issues.push(`page scrolls horizontally (${document.documentElement.scrollWidth} > ${vw})`);
-      const vis = el => { const r = el.getBoundingClientRect(); const s = getComputedStyle(el); return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none' && !el.closest('.hidden,[hidden],details:not([open]) > :not(summary)'); };
+      const vis = el => { const r = el.getBoundingClientRect(); const s = getComputedStyle(el); return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none' && s.pointerEvents !== 'none' && !el.closest('.hidden,[hidden],details:not([open]) > :not(summary)'); };
       const sel = 'button, a[href], input:not([type=hidden]):not([type=file]), select, textarea, summary, label.switch';
       for (const el of document.querySelectorAll(sel)) {
         if (!vis(el)) continue;
@@ -320,7 +320,7 @@ def test_offline(browser):
     pg.fill('#qa', 'offline task at 8pm'); pg.press('#qa', 'Enter'); pg.wait_for_timeout(300)
     added = pg.evaluate("window.__steady.all('tasks').some(t=>t.title==='Offline task')")
     go(pg, 'insights'); charts = pg.locator('.chart').count()
-    fonts = pg.evaluate("document.fonts.check('16px Inter') && document.fonts.check('20px \"Instrument Serif\"')")
+    fonts = pg.evaluate("document.fonts.check('16px \"Host Grotesk\"')")
     shot_and_audit(pg, 'offline-insights', cfg)
     record('offline: service worker serves app shell after reload, data + charts + fonts work', cfg, ctrl and cached >= 30 and n > 0 and added and charts >= 3 and fonts, f'ctrl={ctrl} cached={cached} tasks={n} added={added} charts={charts} fonts={fonts}')
     c.set_offline(False); c.close()

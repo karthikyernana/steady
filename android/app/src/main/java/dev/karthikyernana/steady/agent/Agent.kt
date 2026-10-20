@@ -87,7 +87,7 @@ class Agent(private val store: Store, private val api: Api) {
             putJsonObject("profile") { put("name", s.profile.str("name") ?: ""); put("wake", s.profile.str("wake") ?: "07:00"); put("sleep", s.profile.str("sleep") ?: "23:30") }
             put("defaultReminder", s.settings.bool("defaultReminder") != false)
             putJsonArray("tasks") { open.forEach { x -> addJsonObject { put("id", x.id); put("title", clip(x.title, 90)); put("due", x.dueDate); put("time", x.dueTime); put("goalId", x.goalId) } } }
-            putJsonArray("done") { done.forEach { x -> addJsonObject { put("id", x.id); put("title", clip(x.title, 90)); put("doneOn", x.doneAt?.let { java.time.Instant.ofEpochMilli(it).toString().take(10) }) } } }
+            putJsonArray("done") { done.forEach { x -> addJsonObject { put("id", x.id); put("title", clip(x.title, 90)); put("doneOn", x.doneAt?.let { doneDay(it) }) } } }
             putJsonArray("goals") { s.goals.take(12).forEach { g -> addJsonObject {
                 put("id", g.id); put("title", clip(g.title, 90)); put("target", g.target)
                 putJsonArray("milestones") { g.milestones.filter { !it.done }.take(6).forEach { m -> addJsonObject { put("id", m.id); put("title", clip(m.title, 80)); put("week", m.week) } } }
@@ -185,3 +185,6 @@ class Agent(private val store: Store, private val api: Api) {
 
     fun undo(a: Applied) { for ((coll, id, prev) in a.changes.reversed()) if (prev != null) store.save(coll, prev) else store.remove(coll, id) }
 }
+
+/** The local calendar day a task was finished on (ISO yyyy-MM-dd in the phone's zone, never UTC: 01:00 IST is that day, not the day before). */
+internal fun doneDay(at: Long, zone: ZoneId = ZoneId.systemDefault()): String = java.time.Instant.ofEpochMilli(at).atZone(zone).toLocalDate().toString()

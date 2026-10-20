@@ -66,7 +66,7 @@ export function editGoal(id) {
   const weeks = [...Array(16)].map((_, i) => keyAdd(thisWeek(), i * 7));
   const msRows = () => state.milestones.map((m, i) => `<li class="edit-row"><button type="button" class="check sm ${m.done ? 'on' : ''}" data-msi="${i}" aria-label="Toggle">${I.check}</button>
       <input value="${esc(m.title)}" data-mst="${i}" aria-label="Milestone">
-      <select data-msw="${i}" aria-label="Week">${weeks.concat(m.week && !weeks.includes(m.week) ? [m.week] : []).map(w => `<option value="${w}" ${w === m.week ? 'selected' : ''}>${weekLabel(w)}</option>`).join('')}</select>
+      <select data-msw="${i}" aria-label="Week">${(m.week ? [] : ['']).concat(weeks, m.week && !weeks.includes(m.week) ? [m.week] : []).map(w => `<option value="${w}" ${w === (m.week || '') ? 'selected' : ''}>${weekLabel(w)}</option>`).join('')}</select>
       <button type="button" class="icon-btn subtle" data-msx="${i}" aria-label="Remove">${I.close}</button></li>`).join('');
   const acRows = () => state.actions.map((a, i) => `<li class="edit-row"><input value="${esc(a.title)}" data-act-t="${i}" aria-label="Daily action"><button type="button" class="icon-btn subtle" data-acx="${i}" aria-label="Remove">${I.close}</button></li>`).join('');
   openSheet({
@@ -85,7 +85,7 @@ export function editGoal(id) {
       const f = b.querySelector('#gf');
       const sync = () => {
         b.querySelectorAll('[data-mst]').forEach(x => { state.milestones[+x.dataset.mst].title = x.value; });
-        b.querySelectorAll('[data-msw]').forEach(x => { state.milestones[+x.dataset.msw].week = x.value; });
+        b.querySelectorAll('[data-msw]').forEach(x => { state.milestones[+x.dataset.msw].week = x.value || null; });
         b.querySelectorAll('[data-act-t]').forEach(x => { state.actions[+x.dataset.actT].title = x.value; });
       };
       const redraw = () => { b.querySelector('#msl').innerHTML = msRows(); b.querySelector('#acl').innerHTML = acRows(); };

@@ -87,7 +87,7 @@ private fun Main(activity: MainActivity, snackbar: SnackbarHostState) {
     var you by rememberSaveable { mutableStateOf(false) }
     var chat by rememberSaveable { mutableStateOf(false) }
     var voice by remember { mutableStateOf(false) }
-    var hold by remember { mutableStateOf<HoldState?>(null) }       // set while the voice sheet was opened by holding Ask
+    var heard by remember { mutableStateOf<List<ByteArray>?>(null) }   // what a hold on Ask recorded: the sheet opens on it
     val ctxA = LocalContext.current
     val scopeA = rememberCoroutineScope()
     // Chat state lives here so a conversation survives closing it; the composer mic dictates into it
@@ -107,11 +107,18 @@ private fun Main(activity: MainActivity, snackbar: SnackbarHostState) {
         }
     }
     val openChat = { you = false; chat = true; hint = false }
-    val holdAsk = {
-        hint = false; c.app.store.setLocal("askHeld", "1")
-        if (!voice) { hold = HoldState().also { it.down = true; it.openedAt = System.currentTimeMillis() }; voice = true }
+    // hold-to-talk lives on the Ask button itself; the sheet opens only after you let go
+    val voiceHold = remember { VoiceHold(dev.karthikyernana.steady.agent.Recorder(ctxA)) }
+    val voicePerm = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
+        if (ok) voiceHold.showHint("Hold again to talk") else c.toast("Microphone access is off for Steady. Tap Ask to type.", null) }
+    val askHeld = { hint = false; c.app.store.setLocal("askHeld", "1") }
+    val askFab: @Composable () -> Unit = {
+        AskFab(openChat, voiceHold, canRecord = { c.app.sync.signedIn },
+            permitted = { androidx.core.content.ContextCompat.checkSelfPermission(ctxA, Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED },
+            onRequestPermission = { askHeld(); voicePerm.launch(Manifest.permission.RECORD_AUDIO) },
+            onOpenTyping = { askHeld(); heard = null; voice = true },
+            onSend = { p -> askHeld(); heard = p; voice = true })
     }
-    val releaseAsk = { ms: Long, cancelled: Boolean -> hold?.let { h -> h.down = false; h.finish = AskPress.outcome(ms, cancelled) == "stop" }; Unit }
     val micPerm = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok -> if (ok) chatState.toggleMic(c.app.sync.signedIn) else c.toast("Microphone access is off for Steady. Typing works.", null) }
     val chatMic = {
         if (!c.app.sync.signedIn || chatState.listening || androidx.core.content.ContextCompat.checkSelfPermission(ctxA, Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED) chatState.toggleMic(c.app.sync.signedIn)
@@ -169,37 +176,46 @@ private fun Main(activity: MainActivity, snackbar: SnackbarHostState) {
         // soft fade where content runs under the floating bar, so text never shows through the icons
         if (!rail) Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(150.dp).background(androidx.compose.ui.graphics.Brush.verticalGradient(
             0f to P.ground.copy(alpha = 0f), 0.45f to P.ground.copy(alpha = 0.82f), 1f to P.ground)))
+        // holding Ask to talk: a quiet scrim so the button is the only thing that matters
+        androidx.compose.animation.AnimatedVisibility(voiceHold.recording, enter = fadeIn(androidx.compose.animation.core.tween(160)), exit = fadeOut(androidx.compose.animation.core.tween(160))) {
+            Box(Modifier.fillMaxSize().background(P.ground.copy(alpha = 0.55f)).testTag("ask-scrim"))
+        }
         // floating glass tab bar + the mic, like the web app (the mic is never inside the bar)
         val imeOpen = WindowInsets.ime.getBottom(androidx.compose.ui.platform.LocalDensity.current) > 0
         if (rail) {
             SideRail(if (you) null else tab, Modifier.align(Alignment.CenterStart).windowInsetsPadding(WindowInsets.displayCutout.union(WindowInsets.navigationBars).only(WindowInsetsSides.Start)).padding(start = 10.dp)) { you = false; chat = false; tab = it }
             if (!imeOpen && !chat) Column(Modifier.align(Alignment.BottomEnd).navigationBarsPadding().padding(12.dp), horizontalAlignment = Alignment.End) {
                 androidx.compose.animation.AnimatedVisibility(hint, enter = fadeIn(), exit = fadeOut()) { AskHint(Modifier.padding(end = 6.dp, bottom = 6.dp)) }
-                AskFab(openChat, holdAsk, releaseAsk)
+                askFab()
             }
         } else {
             if (!imeOpen && !chat) Column(Modifier.align(Alignment.BottomCenter).widthIn(max = 600.dp).fillMaxWidth().navigationBarsPadding().padding(horizontal = 10.dp, vertical = 8.dp), horizontalAlignment = Alignment.End) {
                 androidx.compose.animation.AnimatedVisibility(hint, enter = fadeIn(), exit = fadeOut()) { AskHint(Modifier.padding(end = 6.dp, bottom = 4.dp)) }
                 // Ask: tap = Chat, hold = the voice agent (the bottom bar keeps exactly five tabs)
-                AskFab(openChat, holdAsk, releaseAsk)
+                askFab()
                 Spacer(Modifier.height(6.dp))
                 BottomBar(if (you) null else tab) { you = false; chat = false; tab = it }
             }
         }
         // Chat: a full-height sheet that rises from the bottom over everything; all its controls sit in the thumb zone
-        androidx.compose.animation.AnimatedVisibility(chat && !you, enter = androidx.compose.animation.slideInVertically(androidx.compose.animation.core.spring(dampingRatio = 0.9f, stiffness = 420f)) { it } + fadeIn(),
-            exit = androidx.compose.animation.slideOutVertically(androidx.compose.animation.core.tween(220)) { it } + fadeOut(androidx.compose.animation.core.tween(200))) {
+        // a scrim fades in behind it; the sheet itself only translates (no alpha layer over a full-screen shadow, which
+        // was the stutter in 1.5.0), with a critically-damped spring so it settles without a wobble
+        androidx.compose.animation.AnimatedVisibility(chat && !you, enter = fadeIn(androidx.compose.animation.core.tween(200)), exit = fadeOut(androidx.compose.animation.core.tween(180))) {
+            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = if (P.dark) 0.45f else 0.22f)))
+        }
+        androidx.compose.animation.AnimatedVisibility(chat && !you, enter = androidx.compose.animation.slideInVertically(androidx.compose.animation.core.spring(dampingRatio = 1f, stiffness = 520f)) { it },
+            exit = androidx.compose.animation.slideOutVertically(androidx.compose.animation.core.tween(220, easing = androidx.compose.animation.core.FastOutLinearInEasing)) { it }) {
             ChatSheet(chatState, c.app.sync.signedIn && !chatState.off, onClose = { chat = false }, onMic = chatMic)
         }
         androidx.compose.animation.AnimatedVisibility(guide, enter = androidx.compose.animation.fadeIn(), exit = androidx.compose.animation.fadeOut()) {
             BackHandler { c.app.store.setLocal("guideSeen", "1"); guide = false }
             Guide { c.app.store.setLocal("guideSeen", "1"); guide = false }
         }
-        SnackbarHost(snackbar, Modifier.align(Alignment.BottomStart).navigationBarsPadding().imePadding().padding(start = if (rail) 96.dp else 8.dp, end = if (chat && !you) 8.dp else 120.dp, bottom = if (chat && !you) 136.dp else if (rail) 16.dp else 88.dp)) {
+        SnackbarHost(snackbar, Modifier.align(Alignment.BottomStart).navigationBarsPadding().imePadding().padding(start = if (rail) 96.dp else 8.dp, end = if (chat && !you) 8.dp else 120.dp, bottom = if (chat && !you) 88.dp else if (rail) 16.dp else 88.dp)) {
             Snackbar(it, containerColor = P.ink, contentColor = P.ground, actionColor = P.accentLine, shape = RoundedCornerShape(999.dp))
         }
     }
-    if (voice) VoiceSheet(onClose = { voice = false; hold = null }, hold = hold)
+    if (voice) VoiceSheet(onClose = { voice = false; heard = null }, heard = heard)
 }
 
 @Composable

@@ -2,7 +2,7 @@
       const issues = [];
       const vw = document.documentElement.clientWidth;
       if (document.documentElement.scrollWidth > vw + 1) issues.push(`page scrolls horizontally (${document.documentElement.scrollWidth} > ${vw})`);
-      const vis = el => { const r = el.getBoundingClientRect(); const s = getComputedStyle(el); return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none' && !el.closest('.hidden,[hidden],[aria-hidden="true"],details:not([open]) > :not(summary)'); };
+      const vis = el => { const r = el.getBoundingClientRect(); const s = getComputedStyle(el); return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none' && s.pointerEvents !== 'none' && !el.closest('.hidden,[hidden],[aria-hidden="true"],details:not([open]) > :not(summary)'); };
       const sel = 'button, a[href], input:not([type=hidden]):not([type=file]), select, textarea, summary, label.switch';
       for (const el of document.querySelectorAll(sel)) {
         if (!vis(el)) continue;

@@ -49,4 +49,41 @@ class ChatCardsTest {
         val pts = ChatCard.parse(buildJsonObject { put("component", "Bar"); putJsonObject("data") { putJsonArray("points") { add(JsonPrimitive(3)); addJsonObject { put("label", "A"); put("value", 2) } } } })!!
         assertEquals(listOf("A"), pts.points.map { it.label })
     }
+
+    @Test fun newFieldsParseLeniently() {
+        val m = ChatMessage.parse(buildJsonObject { put("id", "a"); put("role", "assistant"); put("text", "Hi"); put("brandNew", true)
+            putJsonArray("suggestions") { add("  Show   my week "); add(JsonPrimitive(4)); addJsonObject { put("label", "Due tomorrow?") }; add("x".repeat(81)); add("Show my week"); add("a"); add("b"); add("c") } })
+        assertEquals(listOf("Show my week", "Due tomorrow?", "a", "b"), m.suggestions)
+        assertTrue(ChatMessage.parse(buildJsonObject { put("text", "old server") }).suggestions.isEmpty())
+        assertTrue(ChatMessage.parse(buildJsonObject { put("suggestions", "nope") }).suggestions.isEmpty())
+        assertTrue(msg.suggestions.isEmpty())                                     // the 1.5 fixture has none
+        val st = dev.karthikyernana.steady.agent.ChatStarter.parse(buildJsonObject { put("cards", 3) })
+        assertTrue(st.cards.isEmpty() && st.suggestions.isEmpty() && st.greeting == null)
+    }
+
+    @Test fun statLabelsReadAsPlainEnglish() {
+        val g = dev.karthikyernana.steady.agent.ChatGrammar
+        assertEquals("task", g.statLabel("items", 1.0, "query_tasks")); assertEquals("tasks", g.statLabel("items", 2.0, "query_tasks"))
+        assertEquals("entries", g.statLabel("items", 0.0, "query_money")); assertEquals("entry", g.statLabel("items", 1.0, "query_money"))
+        assertEquals("item", g.statLabel("items", 1.0, null)); assertEquals("thought this month", g.statLabel("thoughts this month", 1.0, "get_insights_summary"))
+        assertEquals("day streak", g.statLabel("day streak", 5.0, null)); assertEquals("milestone done", g.statLabel("milestones done", 1.0, null))
+        assertEquals("query_money", card("Stat").tool)
+    }
+
+    @Test fun countUpKeepsTheFigureShape() {
+        val c = dev.karthikyernana.steady.ui.screens.CountUp
+        val p = c.parts("₹1,23,450")!!; assertEquals("₹1,23,450", c.format(p, p.value)); assertEquals("₹61,725", c.format(p, p.value / 2))
+        val w = c.parts("12,500")!!; assertEquals("12,500", c.format(w, 12500.0))
+        assertEquals("40%", c.parts("40%")!!.let { c.format(it, 40.0) })
+        assertEquals("1 day", c.parts("10 days")!!.let { c.format(it, 1.0) }); assertEquals("10 days", c.parts("10 days")!!.let { c.format(it, 10.0) })
+        assertNull(c.parts("–"))
+    }
+
+    @Test fun dayLabelsAndTimes() {
+        val line = card("Line"); assertEquals(30, line.series.size)                // already complete: unchanged
+        assertEquals("Mon", dev.karthikyernana.steady.agent.ChatSeries.short("2026-10-19", 7)); assertEquals("19", dev.karthikyernana.steady.agent.ChatSeries.short("2026-10-19", 30))
+        val z = java.time.ZoneId.of("Asia/Kolkata"); val now = java.time.ZonedDateTime.of(2026, 10, 21, 21, 0, 0, 0, z).toInstant().toEpochMilli()
+        assertEquals("Today 9:41 PM", dev.karthikyernana.steady.ui.screens.chatTime(now + 41 * 60_000, now, z))
+        assertEquals("Yesterday 8:05 AM", dev.karthikyernana.steady.ui.screens.chatTime(now - (36 * 60 + 55) * 60_000L, now, z))
+    }
 }

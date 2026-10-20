@@ -127,8 +127,9 @@ export async function verifyGoogleIdToken(idToken) {
   const parts = String(idToken || '').split('.');
   if (parts.length !== 3) throw Object.assign(new Error('Bad token'), { status: 401 });
   const [h, p, sig] = parts;
-  const header = b64json(h), claims = b64json(p);
-  if (header.alg !== 'RS256') throw Object.assign(new Error('Bad token'), { status: 401 });
+  let header, claims;
+  try { header = b64json(h); claims = b64json(p); } catch { throw Object.assign(new Error('Bad token'), { status: 401 }); }
+  if (header?.alg !== 'RS256') throw Object.assign(new Error('Bad token'), { status: 401 });
   const jwk = (await googleKeys()).find(k => k.kid === header.kid);
   if (!jwk) throw Object.assign(new Error('Unknown signing key'), { status: 401 });
   const v = createVerify('RSA-SHA256'); v.update(`${h}.${p}`);
@@ -163,12 +164,14 @@ export function checkPassphrase(pass, stored) {
   return timingSafeEqual(want, got);
 }
 
-export async function tooManyAttempts(ip) {
-  const { rows } = await query(`select count(*)::int as n from login_attempts where not ok and at > now() - interval '1 hour' and (ip = $1 or $1 is null)`, [ip]);
-  const { rows: all } = await query(`select count(*)::int as n from login_attempts where not ok and at > now() - interval '1 hour'`);
-  return rows[0].n >= 5 || all[0].n >= 20;
+// Failed sign-ins in the last hour: 5 from one IP, or 10 against one account (spread over many IPs), pause sign-in for
+// that IP / that account only. No instance-wide cap: that would let anyone lock every user out.
+export async function tooManyAttempts(ip, email = null) {
+  const { rows } = await query(`select count(*) filter (where ip = $1 or $1 is null)::int as by_ip, count(*) filter (where email = $2)::int as by_email
+      from login_attempts where not ok and at > now() - interval '1 hour'`, [ip, email ? normEmail(email) : null]);
+  return rows[0].by_ip >= 5 || rows[0].by_email >= 10;
 }
-export const logAttempt = (ip, ok) => query('insert into login_attempts (ip, ok) values ($1, $2)', [ip, ok]);
+export const logAttempt = (ip, ok, email = null) => query('insert into login_attempts (ip, ok, email) values ($1, $2, $3)', [ip, ok, email ? normEmail(email).slice(0, 254) : null]);
 
 export const hashToken = sha256;
 

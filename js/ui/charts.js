@@ -24,17 +24,28 @@ export function heatmap(counts, { weeks = 22 } = {}) {
   return `<svg viewBox="0 0 ${W} ${H}" class="chart heatmap" role="img" aria-label="Completion heatmap, last ${weeks} weeks">${months}${labels}${rects}</svg>`;
 }
 
-export function bars(values, labels, { highlight = -1, fmt = v => v, height = 120, emptyLabel = '', label = 'Bar chart' } = {}) {
+// values[i] null = no data (faint), 0 = a real zero (a thin baseline stub, class "zero"). Options used by chat cards:
+// maxBar caps the bar width (a single day never fills the card), values shows value labels (default when n ≤ 8),
+// titles gives each bar's tooltip. Labels thin out to about eight when crowded.
+export function bars(values, labels, { highlight = -1, fmt = v => v, height = 120, emptyLabel = '', label = 'Bar chart', maxBar = 0, values: showVals, titles = null } = {}) {
   const n = values.length, W = 320, padB = 20, padT = 16, gap = n > 12 ? 2 : 8;
-  const bw = (W - gap * (n - 1)) / n;
+  let bw = (W - gap * (n - 1)) / n;
+  if (maxBar && bw > maxBar) bw = maxBar;
+  const span = bw * n + gap * (n - 1), x0 = (W - span) / 2;
   const max = Math.max(1e-9, ...values.map(v => v || 0));
+  const every = maxBar ? Math.max(1, Math.ceil(n / 8)) : (n <= 12 ? 1 : 3);
+  const vals = showVals ?? n <= 8;
   let out = '';
   values.forEach((v, i) => {
     const h = v ? Math.max(3, (v / max) * (height - padB - padT)) : 2;
-    const x = i * (bw + gap), y = height - padB - h;
-    out += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" rx="${Math.min(4, bw / 3).toFixed(1)}" class="bar${i === highlight ? ' hi' : ''}${v == null ? ' na' : ''}"><title>${esc(labels[i])}: ${v == null ? emptyLabel || 'no data' : fmt(v)}</title></rect>`;
-    if (labels[i] && (n <= 12 || i % 3 === 0)) out += `<text x="${(i === 0 && n > 12 ? x : x + bw / 2).toFixed(1)}" y="${height - 5}" text-anchor="${i === 0 && n > 12 ? 'start' : 'middle'}" class="ax">${esc(labels[i])}</text>`;
-    if (v != null && n <= 8) out += `<text x="${(x + bw / 2).toFixed(1)}" y="${(y - 4).toFixed(1)}" text-anchor="middle" class="val">${esc(fmt(v))}</text>`;
+    const x = x0 + i * (bw + gap), y = height - padB - h;
+    const tip = titles?.[i] || `${labels[i]}: ${v == null ? emptyLabel || 'no data' : fmt(v)}`;
+    out += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" rx="${Math.min(4, bw / 3).toFixed(1)}" class="bar${i === highlight ? ' hi' : ''}${v == null ? ' na' : v === 0 ? ' zero' : ''}"><title>${esc(tip)}</title></rect>`;
+    if (labels[i] && i % every === 0) {
+      const anchorStart = !maxBar && i === 0 && n > 12;
+      out += `<text x="${(anchorStart ? x : x + bw / 2).toFixed(1)}" y="${height - 5}" text-anchor="${anchorStart ? 'start' : 'middle'}" class="ax">${esc(labels[i])}</text>`;
+    }
+    if (v != null && vals && !(maxBar && v === 0)) out += `<text x="${(x + bw / 2).toFixed(1)}" y="${(y - 4).toFixed(1)}" text-anchor="middle" class="val${v === 0 ? ' zero' : ''}">${esc(fmt(v))}</text>`;
   });
   return `<svg viewBox="0 0 ${W} ${height}" class="chart bars" role="img" aria-label="${esc(label)}">${out}</svg>`;
 }

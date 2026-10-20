@@ -5,7 +5,13 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.animation.core.*
+import androidx.compose.animation.togetherWith
+import androidx.compose.ui.graphics.graphicsLayer
+import dev.karthikyernana.steady.data.str
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.gestures.scrollBy
@@ -77,8 +83,15 @@ class ChatConv(val key: String, id: String? = null, title: String? = null) {
     var draft = ""
     var follow by mutableStateOf(true)          // keep the newest message in view until you scroll up yourself
     var updatedAt by mutableLongStateOf(0L)
-    /** this chat's own scroll position, so switching back lands where you left it */
+    /** this chat's own scroll position, so switching back lands where you left it (the thread is reverse-laid: 0 = newest) */
     val list = LazyListState()
+    /** the pending question's row key, kept by the real user message once the reply lands (no flicker on swap) */
+    var pendingKey = ""
+    val alias = mutableMapOf<String, String>()
+    /** the answer that just arrived: its words reveal and its cards rise in, once */
+    var reveal by mutableStateOf<String?>(null)
+    /** messages already shown this session: their charts don't replay when scrolled back into view */
+    val seen = HashSet<String>()
 }
 data class ChatHistItem(val id: String?, val key: String?, val title: String, val preview: String, val updatedAt: Long, val pending: Boolean, val unread: Boolean)
 
@@ -88,6 +101,23 @@ class ChatState(private val api: ChatBackend, private val agent: Agent?, private
     var chats by mutableStateOf<List<ChatSummary>?>(null)
     val convs = mutableStateListOf<ChatConv>()
     private var seq = 0
+    private var pseq = 0
+    /** the empty chat's opener from the server (null until loaded, or when the server has none) */
+    var starter by mutableStateOf<dev.karthikyernana.steady.agent.ChatStarter?>(null); private set
+    var starterLoading by mutableStateOf(false); private set
+    private var starterAt by mutableLongStateOf(0L)
+    /** a starter load has finished (with or without one): only then do the built-in chips stand in */
+    val starterReady get() = !starterLoading && starterAt != 0L
+    fun loadStarter() {
+        if (starterLoading || System.currentTimeMillis() - starterAt < 10 * 60_000) return
+        starterLoading = true
+        scope.launch {
+            try { starter = api.starter(); starterAt = System.currentTimeMillis() }
+            catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (e: Exception) { android.util.Log.w("SteadyChat", "starter failed: ${e.message}"); starterAt = System.currentTimeMillis() - 9 * 60_000 }   // retry in a minute
+            finally { starterLoading = false }
+        }
+    }
     private fun newConv(id: String? = null, title: String? = null) = ChatConv("c${++seq}", id, title).also { convs += it }
     var cur by mutableStateOf(newConv()); private set
     private var titles by mutableStateOf(loadTitles())
@@ -135,6 +165,7 @@ class ChatState(private val api: ChatBackend, private val agent: Agent?, private
     fun send(raw: String = input) {
         val text = raw.trim(); val conv = cur
         if (text.isEmpty() || conv.pending != null) return
+        conv.pendingKey = "p${++pseq}"
         conv.pending = text; conv.error = null; conv.retryText = null; conv.updatedAt = System.currentTimeMillis(); conv.draft = ""; conv.follow = true
         input = ""; scrollTick++
         scope.launch {
@@ -143,6 +174,8 @@ class ChatState(private val api: ChatBackend, private val agent: Agent?, private
                 if (conv !in convs) return@launch                       // deleted while it was answering
                 if (conv.id == null) conv.id = r.chatId
                 if (r.title.isNotBlank()) conv.title = r.title
+                if (r.user.id.isNotEmpty()) conv.alias[r.user.id] = conv.pendingKey
+                conv.reveal = r.answer.id.ifEmpty { null }
                 for (m in listOf(r.user, r.answer)) if (m.id.isEmpty() || conv.msgs.none { it.id == m.id }) conv.msgs += m
                 conv.loaded = true; conv.updatedAt = System.currentTimeMillis(); offline = false
                 if (conv !== cur) { conv.unread = true; toast("Answer ready in “${titleOf(conv) ?: "your other chat"}”.") }
@@ -251,64 +284,203 @@ class ChatState(private val api: ChatBackend, private val agent: Agent?, private
     fun stopMic() { if (listening) { listening = false; micJob?.cancel(); recorder?.stopQuietly() } }
 }
 
-// empty state: chart-worthy asks; "What did I write about…" fills the box so you finish the sentence
+// empty state fallback (no starter from the server): chart-worthy asks; "What did I write about…" fills the box
 private val SUGGEST = listOf("Spending by category this month", "How am I doing on my goals?", "What’s due this week?", "What did I write about…")
+
+/** One row of the thread. Immutable, keyed: the LazyColumn diffs by key and never recomposes a row whose data is equal. */
+@Immutable
+private sealed interface Row { val key: String }
+@Immutable private data class TimeRow(override val key: String, val text: String) : Row
+@Immutable private data class MsgRow(override val key: String, val m: ChatMessage, val reveal: Boolean, val chips: List<String>) : Row
+@Immutable private data class TypingRow(override val key: String) : Row
+@Immutable private data class ErrorRow(override val key: String, val text: String, val retry: Boolean) : Row
+
+/** "Today 9:41 PM", "Yesterday 8:02 AM", "Mon 12 Oct, 6:15 PM" */
+internal fun chatTime(at: Long, now: Long = System.currentTimeMillis(), zone: java.time.ZoneId = java.time.ZoneId.systemDefault()): String {
+    val t = java.time.Instant.ofEpochMilli(at).atZone(zone); val today = java.time.Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
+    val clock = t.format(java.time.format.DateTimeFormatter.ofPattern("h:mm a", java.util.Locale.ENGLISH))
+    return when (t.toLocalDate()) {
+        today -> "Today $clock"; today.minusDays(1) -> "Yesterday $clock"
+        else -> t.format(java.time.format.DateTimeFormatter.ofPattern(if (t.year == today.year) "EEE d MMM" else "d MMM yyyy", java.util.Locale.ENGLISH)) + ", $clock"
+    }
+}
+
+/** The thread as rows, oldest first: a time label when the day changes or 30+ minutes pass, chips under the newest answer. */
+private fun threadRows(conv: ChatConv, msgs: List<ChatMessage>, pending: String?, error: String?, canRetry: Boolean): List<Row> {
+    val out = ArrayList<Row>(msgs.size + 6)
+    var last = 0L
+    val lastAgent = if (pending == null && error == null) msgs.lastOrNull()?.takeIf { !it.user } else null
+    msgs.forEachIndexed { i, m ->
+        if (m.at > 0 && (last == 0L || m.at - last > 30 * 60_000 || java.time.Instant.ofEpochMilli(m.at).atZone(java.time.ZoneId.systemDefault()).toLocalDate() != java.time.Instant.ofEpochMilli(last).atZone(java.time.ZoneId.systemDefault()).toLocalDate()))
+            out += TimeRow("t-${m.id.ifEmpty { "x$i" }}", chatTime(m.at))
+        if (m.at > 0) last = m.at
+        val key = conv.alias[m.id]?.let { "u-$it" } ?: "m-${m.id.ifEmpty { "x$i" }}"
+        out += MsgRow(key, m, !m.user && m.id == conv.reveal, if (m === lastAgent) m.suggestions else emptyList())
+    }
+    if (pending != null) {
+        if (last == 0L || System.currentTimeMillis() - last > 30 * 60_000) out += TimeRow("t-${conv.pendingKey}", chatTime(System.currentTimeMillis()))
+        out += MsgRow("u-${conv.pendingKey}", ChatMessage("pending", true, pending, emptyList(), 0), false, emptyList())
+        out += TypingRow("typing")
+    }
+    if (error != null) out += ErrorRow("error", error, canRetry)
+    return out
+}
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun ChatScreen(st: ChatState) {   // the thread (inside ChatSheet)
-    val c = LocalCtx.current
-    val signedIn = c.app.sync.signedIn
+fun ChatScreen(st: ChatState, signedIn: Boolean = LocalCtx.current.app.sync.signedIn, name: String? = runCatching { LocalCtx.current.snap.profile.str("name") }.getOrNull()) {   // the thread (inside ChatSheet)
     val conv = st.cur
     val list = conv.list                                   // each chat keeps its own scroll position
     val scope = rememberCoroutineScope()
+    val reduced = reducedMotion()
     LaunchedEffect(signedIn) { if (signedIn && st.chats == null) st.loadList() }
-    // following: dragging up stops it; reaching the bottom again resumes it
-    LaunchedEffect(conv) { list.interactionSource.interactions.collect { if (it is DragInteraction.Start) conv.follow = false } }
-    LaunchedEffect(conv) { snapshotFlow { list.canScrollForward }.collect { if (!it) conv.follow = true } }
-    val n = conv.msgs.size + (if (conv.pending != null) 2 else 0) + (if (conv.error != null) 1 else 0)
-    // bottom-anchored thread: new content scrolls into view while you follow (or just sent / opened it)
-    LaunchedEffect(conv, n, st.scrollTick) { if (conv.follow) { delay(30); val t = list.layoutInfo.totalItemsCount; if (t > 0) { list.scrollToItem(t - 1); list.scrollBy(100_000f) } } }
     val blocked = when { !signedIn -> "signin"; st.off -> "off"; st.offline -> "offline"; else -> null }
+    val pending = conv.pending; val error = conv.error; val canRetry = st.canRetry
+    // rows rebuild only when the thread itself changes (not on every scroll or keystroke)
+    val rows by remember(conv) { derivedStateOf { threadRows(conv, conv.msgs.toList(), conv.pending, conv.error, conv.retryText != null).asReversed() } }
+    val empty = rows.isEmpty()
+    LaunchedEffect(empty, signedIn, blocked) { if (empty && signedIn && blocked == null) st.loadStarter() }
+    if (empty) { ChatEmpty(st, blocked, name); return }
+
+    // reverse layout: index 0 is the newest row, so the thread is bottom-anchored for free and a growing answer grows upward
+    val atBottom by remember(conv) { derivedStateOf { list.firstVisibleItemIndex == 0 && list.firstVisibleItemScrollOffset < 48 } }
+    LaunchedEffect(conv) { list.interactionSource.interactions.collect { if (it is DragInteraction.Start) conv.follow = false } }
+    LaunchedEffect(conv) { snapshotFlow { atBottom }.collect { if (it) conv.follow = true } }
+    val newest = rows.firstOrNull()?.key
+    LaunchedEffect(conv, newest) { if (conv.follow && list.firstVisibleItemIndex != 0) { if (reduced) list.scrollToItem(0) else list.animateScrollToItem(0) } else if (conv.follow && list.firstVisibleItemScrollOffset != 0) list.animateScrollToItem(0) }
+    LaunchedEffect(conv, st.scrollTick) { if (st.scrollTick > 0) { conv.follow = true; list.scrollToItem(0) } }
     Box(Modifier.fillMaxSize()) {
-    LazyColumn(Modifier.fillMaxSize().testTag("chat"), state = list, contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 6.dp, bottom = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.Bottom)) {
-        if (blocked != null) item(key = "blocked") { Blocked(blocked) }
-        if (conv.msgs.isEmpty() && conv.pending == null && blocked == null && conv.error == null) item(key = "empty") {
-            if (conv.loading) Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.testTag("chat-loading")) {
-                CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = P.accent); Spacer(Modifier.width(10.dp)); Text("Opening that chat…", style = Type.body, color = P.muted)
-            } else Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Ask anything about your tasks, goals, money and thoughts. Answers come from your own data, with charts where they help.", style = Type.body, color = P.muted)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    SUGGEST.forEachIndexed { i, q -> Text(q, style = Type.small, color = P.ink2, modifier = Modifier.clip(RoundedCornerShape(999.dp)).border(1.dp, P.line2, RoundedCornerShape(999.dp))
-                        .background(P.surface).springClick { if (q.endsWith("…")) st.input = q.dropLast(1) + " " else st.send(q) }.padding(horizontal = 14.dp, vertical = 11.dp).testTag("chat-suggest-$i")) }
+        LazyColumn(Modifier.fillMaxSize().testTag("chat"), state = list, reverseLayout = true,
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 14.dp), verticalArrangement = Arrangement.spacedBy(14.dp, Alignment.Bottom)) {
+            if (blocked != null) item(key = "blocked", contentType = "blocked") { Blocked(blocked) }
+            items(rows, key = { it.key }, contentType = { it::class.simpleName }) { r ->
+                val item = Modifier.animateItem(fadeInSpec = androidx.compose.animation.core.spring(stiffness = 300f), fadeOutSpec = androidx.compose.animation.core.tween(120),
+                    placementSpec = androidx.compose.animation.core.spring(dampingRatio = 0.86f, stiffness = 420f))
+                when (r) {
+                    is TimeRow -> Text(r.text, style = Type.label.copy(fontSize = 11.5.sp), color = P.muted, textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        modifier = item.fillMaxWidth().padding(top = 4.dp).testTag("chat-time"))
+                    is MsgRow -> {
+                        val animate = remember(r.key) { conv.seen.add(r.key) }           // first time on screen this session
+                        Box(item) { Message(r.m, r.reveal, animate, r.chips, onChip = { q -> if (q.endsWith("…")) st.input = q.dropLast(1) + " " else st.send(q) }, onRevealed = { if (conv.reveal == r.m.id) conv.reveal = null }) }
+                    }
+                    is TypingRow -> Box(item) { Typing() }
+                    is ErrorRow -> Column(item.testTag("chat-error")) {
+                        Text(r.text, style = Type.body, color = P.danger)
+                        if (r.retry) TextButton(onClick = { st.retry() }, modifier = Modifier.testTag("chat-retry")) { Text("Try again", style = Type.bodyM, color = P.ink) }
+                    }
                 }
-                Text("Chat can read, not change. To add or edit, hold Ask on any screen and say it, or use Today.", style = Type.small, color = P.muted)
             }
         }
-        itemsIndexed(conv.msgs, key = { i, m -> "m-${m.id}-$i" }) { _, m -> Message(m) }
-        conv.pending?.let { s -> item(key = "pending") {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Message(ChatMessage("pending", true, s, emptyList(), 0))
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.testTag("chat-wait")) {
-                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = P.accent); Spacer(Modifier.width(10.dp))
-                    Text("Looking at your data…", style = Type.body, color = P.muted)
-                }
+        // "Latest": you scrolled up and there is more below
+        androidx.compose.animation.AnimatedVisibility(!atBottom && !conv.follow, Modifier.align(Alignment.BottomCenter).padding(bottom = 10.dp),
+            enter = androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(160)) + androidx.compose.animation.scaleIn(androidx.compose.animation.core.spring(dampingRatio = 0.6f, stiffness = 600f), 0.8f),
+            exit = androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(120)) + androidx.compose.animation.scaleOut(targetScale = 0.8f)) {
+            Row(Modifier.heightIn(min = 40.dp).shadow(if (P.dark) 0.dp else 8.dp, RoundedCornerShape(999.dp)).clip(RoundedCornerShape(999.dp)).background(P.ink)
+                .springClick { scope.launch { conv.follow = true; if (reduced) list.scrollToItem(0) else list.animateScrollToItem(0) } }
+                .padding(horizontal = 14.dp).testTag("chat-jump").semantics { contentDescription = "Jump to the latest message" }, verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Outlined.KeyboardArrowDown, null, tint = P.ground, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(4.dp)); Text("Latest", style = Type.label, color = P.ground)
             }
-        } }
-        conv.error?.let { e -> item(key = "error") {
-            Column(Modifier.testTag("chat-error")) {
-                Text(e, style = Type.body, color = P.danger)
-                if (st.canRetry) TextButton(onClick = { st.retry() }, modifier = Modifier.testTag("chat-retry")) { Text("Try again", style = Type.bodyM, color = P.ink) }
+        }
+    }
+}
+
+/** The empty chat: a greeting, the headline insight (the starter's card, from real data) and starter chips. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ChatEmpty(st: ChatState, blocked: String?, name: String?) {
+    val conv = st.cur
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 12.dp).testTag("chat"), verticalArrangement = Arrangement.spacedBy(14.dp, Alignment.Bottom)) {
+        if (blocked != null) { Blocked(blocked); return@Column }
+        if (conv.loading) { Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.testTag("chat-loading")) { Typing(label = "Opening that chat…", tag = "chat-loading-dots") }; return@Column }
+        val starter = st.starter
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.enterUp(true, 0).testTag("chat-empty")) {
+            BrandMark(34.dp); Spacer(Modifier.width(12.dp))
+            Column {
+                Text(starter?.greeting ?: (dev.karthikyernana.steady.core.Dates.greeting() + (name?.takeIf { it.isNotBlank() }?.let { ", $it" } ?: "") + "."), style = Type.h3.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold), color = P.ink, modifier = Modifier.testTag("chat-greeting"))
+                Text(starter?.headline ?: "Ask about your tasks, goals, money and thoughts.", style = Type.small, color = if (starter?.headline != null) P.ink2 else P.muted, modifier = Modifier.testTag("chat-headline"))
             }
-        } }
+        }
+        when {
+            starter != null && starter.cards.isNotEmpty() -> starter.cards.forEachIndexed { i, card ->
+                Box(Modifier.enterUp(true, 90 + i * 90).testTag("chat-starter-card")) { CompositionLocalProvider(LocalCardMotion provides true) { ChatCardView(card) } }
+            }
+            starter == null && !st.starterReady -> StarterSkeleton()
+        }
+        // the server's chips once its starter is in; the built-in ones only when it has none (never a swap mid-look)
+        val chips = starter?.suggestions?.takeIf { it.isNotEmpty() } ?: if (st.starterReady) SUGGEST else emptyList()
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            chips.forEachIndexed { i, q -> Chip(q, "chat-suggest-$i", Modifier.enterUp(true, 160 + i * 60, 10)) { if (q.endsWith("…")) st.input = q.dropLast(1) + " " else st.send(q) } }
+        }
+        Text("Chat reads, never changes. To add or edit, hold Ask and say it.", style = Type.small, color = P.muted, modifier = Modifier.enterUp(true, 400, 6))
     }
-    // "Latest": you scrolled up and there is more below
-    if (!conv.follow && list.canScrollForward) Row(Modifier.align(Alignment.BottomEnd).padding(end = 14.dp, bottom = 10.dp).heightIn(min = 44.dp).clip(RoundedCornerShape(999.dp)).background(P.ink)
-        .springClick { scope.launch { conv.follow = true; val t = list.layoutInfo.totalItemsCount; if (t > 0) { list.animateScrollToItem(t - 1); list.scrollBy(100_000f) } } }
-        .padding(horizontal = 16.dp).testTag("chat-jump").semantics { contentDescription = "Jump to the latest message" }, verticalAlignment = Alignment.CenterVertically) {
-        Icon(Icons.Outlined.KeyboardArrowDown, null, tint = P.ground, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Latest", style = Type.label, color = P.ground)
+}
+
+@Composable
+private fun StarterSkeleton() {
+    val t = rememberInfiniteTransition(label = "skeleton")
+    val a = t.animateFloat(0.45f, 0.9f, infiniteRepeatable(tween(900), RepeatMode.Reverse), label = "skeleton-a")
+    SCard(Modifier.testTag("chat-starter-loading"), pad = 16.dp) {
+        val c = P.surface2
+        Box(Modifier.fillMaxWidth(0.4f).height(12.dp).graphicsLayer { alpha = a.value }.clip(RoundedCornerShape(6.dp)).background(c))
+        Spacer(Modifier.height(12.dp))
+        Box(Modifier.fillMaxWidth(0.6f).height(28.dp).graphicsLayer { alpha = a.value }.clip(RoundedCornerShape(8.dp)).background(c))
     }
+}
+
+@Composable
+private fun Chip(q: String, tag: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Text(q, style = Type.small.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Medium), color = P.ink, maxLines = 2, overflow = TextOverflow.Ellipsis,
+        modifier = modifier.clip(RoundedCornerShape(999.dp)).border(1.dp, P.accentLine, RoundedCornerShape(999.dp))
+            .background(P.accentSoft.copy(alpha = if (P.dark) 0.7f else 0.55f)).springClick(role = androidx.compose.ui.semantics.Role.Button, onClick = onClick).padding(horizontal = 14.dp, vertical = 10.dp).testTag(tag))
+}
+
+/** "Steady is looking": the mark and three dots that rise in turn (draw phase only), with a calm line that changes as it waits. */
+@Composable
+private fun Typing(label: String? = null, tag: String = "chat-wait") {
+    val t = rememberInfiniteTransition(label = "typing")
+    val phase = t.animateFloat(0f, 1f, infiniteRepeatable(tween(1100, easing = LinearEasing)), label = "typing-phase")
+    val clock = t.animateFloat(0f, 3f, infiniteRepeatable(tween(9000, easing = LinearEasing)), label = "typing-clock")
+    val step by remember { derivedStateOf { clock.value.toInt() } }
+    val line = label ?: listOf("Looking at your data…", "Working it out…", "Putting the numbers together…").getOrElse(step) { "Looking at your data…" }
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val lift = with(density) { 4.dp.toPx() }
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.testTag(tag).semantics { contentDescription = "Steady is answering" }) {
+        BrandMark(22.dp); Spacer(Modifier.width(10.dp))
+        Row(Modifier.clip(RoundedCornerShape(16.dp)).background(P.surface).border(1.dp, P.line, RoundedCornerShape(16.dp)).padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+            val dot = P.accent
+            repeat(3) { i -> Box(Modifier.size(7.dp).graphicsLayer {
+                val x = ((phase.value - i * 0.16f + 1f) % 1f); val w = if (x < 0.4f) kotlin.math.sin(x / 0.4f * Math.PI).toFloat() else 0f
+                translationY = -w * lift; alpha = 0.4f + 0.6f * w }.clip(CircleShape).background(dot)) }
+        }
+        Spacer(Modifier.width(10.dp))
+        androidx.compose.animation.AnimatedContent(line, transitionSpec = { androidx.compose.animation.fadeIn(tween(220)) togetherWith androidx.compose.animation.fadeOut(tween(160)) }, label = "typing-line") {
+            Text(it, style = Type.small, color = P.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+/**
+ * Words appear quickly, left to right, without reflow: the whole text is laid out at once and the unrevealed tail is
+ * transparent, so the row has its final height from the first frame (and accessibility reads the full answer).
+ */
+@Composable
+private fun RevealText(text: String, animate: Boolean, style: androidx.compose.ui.text.TextStyle, color: Color, modifier: Modifier = Modifier, onDone: () -> Unit) {
+    val reduced = reducedMotion()
+    val p = remember(text) { androidx.compose.animation.core.Animatable(if (animate && !reduced && text.length > 1) 0f else 1f) }
+    LaunchedEffect(p) { if (p.value < 1f) p.animateTo(1f, tween((text.length * 9).coerceIn(220, 900), easing = LinearEasing)); onDone() }
+    val n by remember(text) { derivedStateOf { (p.value * text.length).toInt().coerceIn(0, text.length) } }
+    if (n >= text.length) { Text(text, style = style, color = color, modifier = modifier); return }
+    val shown = remember(n, text, color) { androidx.compose.ui.text.buildAnnotatedString {
+        append(text.substring(0, n)); pushStyle(androidx.compose.ui.text.SpanStyle(color = Color.Transparent)); append(text.substring(n)); pop() } }
+    Text(shown, style = style, color = color, modifier = modifier)
+}
+
+@Composable
+private fun HeadIcon(icon: androidx.compose.ui.graphics.vector.ImageVector, desc: String, tag: String, onClick: () -> Unit) {
+    Box(Modifier.size(44.dp).clip(CircleShape).springClick(scaleTo = 0.9f, role = androidx.compose.ui.semantics.Role.Button, onClick = onClick)
+        .semantics { contentDescription = desc }.testTag(tag), contentAlignment = Alignment.Center) {
+        Icon(icon, null, tint = P.ink2, modifier = Modifier.size(22.dp))
     }
 }
 
@@ -377,15 +549,31 @@ private fun Blocked(kind: String) {
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun Message(m: ChatMessage) {
+private fun Message(m: ChatMessage, reveal: Boolean = false, animate: Boolean = false, chips: List<String> = emptyList(), onChip: (String) -> Unit = {}, onRevealed: () -> Unit = {}) {
     if (m.user) Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
-        Text(m.text, style = Type.body, color = P.ink, modifier = Modifier.fillMaxWidth(0.85f).wrapContentWidth(Alignment.End)
-            .clip(RoundedCornerShape(18.dp, 18.dp, 6.dp, 18.dp)).background(P.surface2).border(1.dp, P.line, RoundedCornerShape(18.dp, 18.dp, 6.dp, 18.dp))
-            .padding(horizontal = 14.dp, vertical = 10.dp).testTag("chat-msg-user"))
-    } else Column(Modifier.fillMaxWidth().testTag("chat-msg-agent"), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text(m.text, style = Type.body.copy(fontSize = 16.sp, lineHeight = 23.sp), color = P.ink, modifier = Modifier.padding(horizontal = 2.dp))
-        m.cards.forEach { ChatCardView(it) }
+        val shape = RoundedCornerShape(20.dp, 20.dp, 6.dp, 20.dp)
+        Text(m.text, style = Type.body.copy(lineHeight = 22.sp), color = if (P.dark) P.accentInk else Color.White, modifier = Modifier.fillMaxWidth(0.82f).wrapContentWidth(Alignment.End)
+            .clip(shape).background(P.accent).padding(horizontal = 15.dp, vertical = 10.dp).testTag("chat-msg-user"))
+    } else Row(Modifier.fillMaxWidth().testTag("chat-msg-agent")) {
+        // the mark sits beside the first line; cards use the full width under the words
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.Top) {
+                Box(Modifier.padding(top = 1.dp)) { BrandMark(22.dp) }
+                Spacer(Modifier.width(10.dp))
+                if (m.text.isNotBlank()) RevealText(m.text, reveal, Type.body.copy(fontSize = 16.sp, lineHeight = 23.sp), P.ink, Modifier.weight(1f), onRevealed)
+                else { Spacer(Modifier.weight(1f)); LaunchedEffect(Unit) { onRevealed() } }
+            }
+            // a fresh answer: cards rise in one after another as the words finish; history shows them at once
+            val base = if (reveal) (m.text.length * 9).coerceIn(160, 600) else 60
+            CompositionLocalProvider(LocalCardMotion provides animate) {
+                m.cards.forEachIndexed { i, card -> ChatCardView(card, Modifier.enterUp(reveal || animate, base + i * 110, 16)) }
+            }
+            if (chips.isNotEmpty()) FlowRow(Modifier.padding(start = 32.dp, top = 2.dp).testTag("chat-chips"), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                chips.forEachIndexed { i, q -> Chip(q, "chat-chip-$i", Modifier.enterUp(true, (if (reveal) base else 0) + 200 + m.cards.size * 110 + i * 70, 8)) { onChip(q) } }
+            }
+        }
     }
 }
 
@@ -399,7 +587,7 @@ fun ChatComposer(st: ChatState, enabled: Boolean, onMic: () -> Unit, modifier: M
         Box(Modifier.weight(1f).padding(vertical = 8.dp)) {
             when {
                 st.listening -> Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.testTag("chat-listening")) {
-                    Box(Modifier.size((8 + st.level * 10).dp).clip(CircleShape).background(P.danger)); Spacer(Modifier.width(10.dp))
+                    Box(Modifier.size(12.dp).graphicsLayer { val k = 0.7f + st.level * 1.1f; scaleX = k; scaleY = k }.clip(CircleShape).background(P.danger)); Spacer(Modifier.width(10.dp))
                     Text("Listening… tap stop when you’re done", style = Type.body, color = P.ink2, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 st.transcribing -> Text("Writing down what you said…", style = Type.body, color = P.muted, maxLines = 1)
@@ -420,9 +608,11 @@ fun ChatComposer(st: ChatState, enabled: Boolean, onMic: () -> Unit, modifier: M
         }
         Spacer(Modifier.width(4.dp))
         val can = enabled && st.input.isNotBlank() && st.sending == null && !st.listening
-        Box(Modifier.size(44.dp).clip(CircleShape).background(if (can) P.ink else P.line2).springClick(enabled = can, scaleTo = 0.9f) { st.send() }
+        val sendBg by androidx.compose.animation.animateColorAsState(if (can) P.accent else P.line2, tween(180), label = "send-bg")
+        val sendScale by animateFloatAsState(if (can) 1f else 0.88f, spring(dampingRatio = 0.55f, stiffness = 600f), label = "send-scale")
+        Box(Modifier.size(44.dp).graphicsLayer { scaleX = sendScale; scaleY = sendScale }.clip(CircleShape).background(sendBg).springClick(enabled = can, scaleTo = 0.9f) { st.send() }
             .semantics { contentDescription = "Send" }.testTag("chat-send"), contentAlignment = Alignment.Center) {
-            Icon(Icons.Rounded.ArrowUpward, null, tint = if (can) P.ground else P.muted, modifier = Modifier.size(20.dp))
+            Icon(Icons.Rounded.ArrowUpward, null, tint = if (can) (if (P.dark) P.accentInk else Color.White) else P.muted, modifier = Modifier.size(20.dp))
         }
     }
 }
@@ -432,9 +622,7 @@ fun ChatComposer(st: ChatState, enabled: Boolean, onMic: () -> Unit, modifier: M
  * dock (History · New · Close, then the composer), which rides on top of the keyboard.
  */
 @Composable
-fun ChatSheet(st: ChatState, enabled: Boolean, onClose: () -> Unit, onMic: () -> Unit) {
-    val c = LocalCtx.current
-    val signedIn = c.app.sync.signedIn
+fun ChatSheet(st: ChatState, enabled: Boolean, onClose: () -> Unit, onMic: () -> Unit, signedIn: Boolean = LocalCtx.current.app.sync.signedIn) {
     val density = androidx.compose.ui.platform.LocalDensity.current
     val scope = rememberCoroutineScope()
     val drag = remember { androidx.compose.animation.core.Animatable(0f) }
@@ -445,32 +633,34 @@ fun ChatSheet(st: ChatState, enabled: Boolean, onClose: () -> Unit, onMic: () ->
         .pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent() } }      // touches never fall through to the tab underneath
         .testTag("chat-sheet")) {
         Column(Modifier.fillMaxSize().statusBarsPadding().windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars).only(WindowInsetsSides.Bottom))) {
-            // header: only the title
+            // header (as the web): the Steady mark, "Steady" over a one-line chat title, then History · New · Close as icon
+            // buttons; drag the header down (or Back) to close
             Column(Modifier.fillMaxWidth().draggable(androidx.compose.foundation.gestures.rememberDraggableState { d -> scope.launch { drag.snapTo((drag.value + d).coerceAtLeast(0f)) } },
                 androidx.compose.foundation.gestures.Orientation.Vertical, onDragStopped = { v ->
                     if (drag.value > with(density) { 90.dp.toPx() } || v > 1400f) onClose() else drag.animateTo(0f, androidx.compose.animation.core.spring(dampingRatio = 0.8f))
-                }).padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 10.dp).testTag("chat-head")) {
-                Box(Modifier.align(Alignment.CenterHorizontally).size(width = 38.dp, height = 4.dp).clip(RoundedCornerShape(4.dp)).background(P.line2))
-                Spacer(Modifier.height(12.dp))
-                if (st.title != null) Text(st.title!!, style = Type.h2.copy(fontSize = 22.sp, lineHeight = 28.sp), color = P.ink, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.testTag("chat-title"))
-                else Text(androidx.compose.ui.text.buildAnnotatedString { append("Ask about "); pushStyle(androidx.compose.ui.text.SpanStyle(color = P.accent)); append("your data"); pop(); append(".") },
-                    style = Type.h2.copy(fontSize = 22.sp, lineHeight = 28.sp), color = P.ink, modifier = Modifier.testTag("chat-title"))
+                }).padding(start = 16.dp, end = 6.dp, top = 6.dp, bottom = 6.dp).testTag("chat-head")) {
+                Box(Modifier.align(Alignment.CenterHorizontally).size(width = 36.dp, height = 4.dp).clip(RoundedCornerShape(4.dp)).background(P.line2))
+                Spacer(Modifier.height(6.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    BrandMark(26.dp); Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("Steady", style = Type.label.copy(fontSize = 12.sp), color = P.muted, maxLines = 1)
+                        androidx.compose.animation.Crossfade(st.title ?: "New chat", animationSpec = tween(180), label = "chat-title") { t ->
+                            Text(t, style = Type.bodyM.copy(fontSize = 16.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold), color = P.ink, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.testTag("chat-title"))
+                        }
+                    }
+                    Box {
+                        HeadIcon(Icons.Outlined.History, if (st.othersBusy) "History, another chat has news" else "History", "chat-hist-btn") { st.hist = true; if (signedIn) st.loadList() }
+                        if (st.othersBusy) Box(Modifier.align(Alignment.TopEnd).padding(top = 10.dp, end = 10.dp).size(8.dp).clip(CircleShape).background(P.accent).testTag("chat-hist-news"))
+                    }
+                    HeadIcon(Icons.Outlined.Add, "New chat", "chat-new") { st.fresh() }
+                    HeadIcon(Icons.Outlined.KeyboardArrowDown, "Close chat", "chat-close", onClick = onClose)
+                }
             }
             Box(Modifier.fillMaxWidth().height(1.dp).background(P.line))
-            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.TopCenter) { Box(Modifier.widthIn(max = 640.dp).fillMaxSize()) { ChatScreen(st) } }
-            // the dock: every control in the thumb zone
+            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.TopCenter) { Box(Modifier.widthIn(max = 640.dp).fillMaxSize()) { ChatScreen(st, signedIn) } }
+            // the dock: just the composer, riding on the keyboard
             Column(Modifier.align(Alignment.CenterHorizontally).widthIn(max = 640.dp).fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 10.dp).testTag("chat-dock")) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box {
-                        SmallAction(Icons.Outlined.History, "History", "chat-hist-btn", desc = if (st.othersBusy) "History, another chat has news" else "History") { st.hist = true; if (signedIn) st.loadList() }
-                        if (st.othersBusy) Box(Modifier.align(Alignment.TopEnd).padding(top = 6.dp, end = 8.dp).size(8.dp).clip(CircleShape).background(P.accent).testTag("chat-hist-news"))
-                    }
-                    Spacer(Modifier.width(6.dp))
-                    SmallAction(Icons.Outlined.Add, "New", "chat-new") { st.fresh() }
-                    Spacer(Modifier.weight(1f))
-                    SmallAction(Icons.Outlined.KeyboardArrowDown, "Close", "chat-close", desc = "Close chat", onClick = onClose)
-                }
-                Spacer(Modifier.height(8.dp))
                 ChatComposer(st, enabled, onMic)
             }
         }

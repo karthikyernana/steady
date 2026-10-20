@@ -28,6 +28,13 @@ export function createMock({ transcript = process.env.MOCK_TRANSCRIPT || 'spent 
       if (!req.headers['api-subscription-key']) return json(403, { error: { message: 'Invalid or missing authentication credentials' } });
       return json(200, { request_id: 'mock', transcript: state.transcript, language_code: 'en-IN' });
     }
+    const em = /^\/v1beta\/models\/([^/:]+):batchEmbedContents$/.exec(url.pathname);
+    if (em) {                                   // embeddings: a deterministic hashed bag of words (similar words → similar vectors)
+      const body = JSON.parse(raw.toString('utf8')); call.body = body; call.model = em[1]; call.embed = (body.requests || []).length;
+      if (!req.headers['x-goog-api-key']) return json(403, { error: { message: 'API key not valid' } });
+      if (state.embedStatus && state.embedStatus !== 200) return json(state.embedStatus, { error: { message: 'mock embed failure' } });
+      return json(200, { embeddings: (body.requests || []).map(r => ({ values: mockEmbedding(r.content?.parts?.[0]?.text || '', r.outputDimensionality || 768) })) });
+    }
     const m = /^\/v1beta\/models\/([^/:]+):generateContent$/.exec(url.pathname);
     if (m) {
       const body = JSON.parse(raw.toString('utf8')); call.body = body; call.model = m[1];
@@ -71,6 +78,13 @@ export function createMock({ transcript = process.env.MOCK_TRANSCRIPT || 'spent 
 // the reply tool with text quoting a real tool figure, and cards that carry QUERIES plus a few deliberately bad bits
 // (made-up numbers, an unknown component) that the server must drop.
 let seq = 0;
+export function mockEmbedding(text, dims = 768) {
+  const v = new Array(dims).fill(0);
+  for (const w of String(text).toLowerCase().match(/[\p{L}\p{N}]+/gu) || []) {
+    for (const g of [w, w.slice(0, 4)]) { let h = 2166136261; for (const ch of g) h = Math.imul(h ^ ch.codePointAt(0), 16777619) >>> 0; v[h % dims] += g === w ? 1 : 0.5; }
+  }
+  const n = Math.hypot(...v) || 1; return v.map(x => x / n);
+}
 const tc = (name, args) => ({ id: `call_${++seq}`, type: 'function', function: { name, arguments: JSON.stringify(args) } });
 export function chatCompletion(body) {
   const msgs = body.messages || [];
@@ -86,6 +100,19 @@ export function chatCompletion(body) {
   const forced = body.tool_choice?.function?.name === 'reply';
   if (/loop forever/.test(u) && !forced) return { role: 'assistant', content: '', tool_calls: [tc('query_tasks', { status: 'open' })] };
   if (/just text/.test(u)) return { role: 'assistant', content: 'Plain words only, no tools.' };
+  // a model that answers a data question in words only (no cards, no suggestions): the server must attach the card
+  if (/done today/.test(u) && !forced) {
+    if (!results.length) return { role: 'assistant', content: '', tool_calls: [tc('query_tasks', { status: 'done', range: 'today' })] };
+    return { role: 'assistant', content: '', tool_calls: [tc('reply', { text: `${results[0].out.count} done today.` })] };
+  }
+  // hybrid search across collections
+  if (/^find |search for/.test(u) && !forced) {
+    const q = u.replace(/^(find|search for)\s+/, '').replace(/[?.!]+$/, '');
+    if (!results.length) return { role: 'assistant', content: '', tool_calls: [tc('search', { query: q })] };
+    const r = results[0].out;
+    return { role: 'assistant', content: '', tool_calls: [tc('reply', { text: r.count ? `Found ${r.count} matches.` : 'Nothing matches that yet.', cards: r.count ? [{ component: 'Timeline', title: 'Matches', query: { tool: 'search', params: { query: q } } }] : [],
+      suggestions: ['Show more like this', 'Spent ₹500 on what?', 'x'.repeat(80)] })] };
+  }
   if (!results.length && !forced) {
     const calls = [];
     const all = /everything/.test(u);
@@ -128,7 +155,8 @@ export function chatCompletion(body) {
   }
   if (!text.length) text.push('I checked, but there is nothing there yet.');
   // "everything" asks for more cards than a reply may carry: the server keeps the first MAX_CARDS
-  return { role: 'assistant', content: '', tool_calls: [tc('reply', { text: text.join(' '), cards })] };
+  const suggestions = got.query_money ? ['Compare with last month', 'Where does most of it go?'] : got.query_goals ? ['Which goal is behind?'] : [];
+  return { role: 'assistant', content: '', tool_calls: [tc('reply', { text: text.join(' '), cards, suggestions })] };
 }
 
 if (process.argv[1] && import.meta.url.endsWith(process.argv[1].split('/').pop())) {

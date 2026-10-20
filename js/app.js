@@ -303,11 +303,19 @@ async function boot() {
   if ('serviceWorker' in navigator) {
     const hadController = !!navigator.serviceWorker.controller;
     navigator.serviceWorker.register('./sw.js').then(reg => {
-      document.addEventListener('visibilitychange', () => { if (!document.hidden) reg.update().catch(() => {}); });
+      document.addEventListener('visibilitychange', () => { if (!document.hidden) reg?.update().catch(() => {}); });
     }).catch(e => console.warn('SW', e));
     // a new version took over: reload once so code and cache always match
     let reloaded = false;
-    navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController && !reloaded) { reloaded = true; location.reload(); } });
+    // ...but never under the user's fingers: with a sheet open or something typed, wait until the app is in the background
+    const busy = () => sheetOpen() || [...document.querySelectorAll('textarea, input[type=text], input[type=search], input:not([type])')].some(el => el.value.trim());
+    const reloadNow = () => { if (reloaded) return; reloaded = true; location.reload(); };
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController || reloaded) return;
+      if (!busy()) { reloadNow(); return; }
+      const later = () => { if (document.hidden) { document.removeEventListener('visibilitychange', later); reloadNow(); } };
+      document.addEventListener('visibilitychange', later);
+    });
     navigator.serviceWorker.addEventListener('message', e => {
       if (e.data?.type === 'task-done' || e.data?.type === 'task-snooze') taskAction(e.data.type, e.data.id);
     });

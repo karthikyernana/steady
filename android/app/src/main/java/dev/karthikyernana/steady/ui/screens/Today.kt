@@ -1,6 +1,16 @@
 package dev.karthikyernana.steady.ui.screens
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.rememberScrollState
@@ -42,6 +52,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import dev.karthikyernana.steady.core.Dates
+import dev.karthikyernana.steady.core.DayHistory
 import dev.karthikyernana.steady.core.Engine
 import dev.karthikyernana.steady.core.QuickParse
 import dev.karthikyernana.steady.data.*
@@ -64,9 +75,40 @@ fun setStatus(c: Ctx, t: Task, status: String) {
     c.toast(msg) { c.app.store.save("tasks", prev) }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
+/**
+ * Today, plus day navigation: ‹ › on the date and a horizontal swipe step through past days (what got done, skipped,
+ * moved on) and future days (what is planned); system Back or "Back to today" returns. Rules: core/DayHistory.kt
+ * (mirrors the web's #/today?d=YYYY-MM-DD in views/today.js).
+ */
 @Composable
 fun TodayScreen() {
+    val tk = Dates.todayKey()
+    var picked by rememberSaveable { mutableStateOf<String?>(null) }          // null = today (survives the date rolling over)
+    val day = picked?.takeIf { it != tk } ?: tk
+    val go: (String) -> Unit = { k -> val n = DayHistory.clamp(k, tk); picked = if (n == tk) null else n }
+    var editing by remember { mutableStateOf<Task?>(null) }
+    BackHandler(enabled = day != tk) { picked = null }
+    val swipe = Modifier.pointerInput(day, tk) {
+        val threshold = 72.dp.toPx(); var dx = 0f
+        detectHorizontalDragGestures(onDragStart = { dx = 0f }, onDragEnd = {
+            if (dx <= -threshold) go(Dates.keyAdd(day, 1)) else if (dx >= threshold) go(Dates.keyAdd(day, -1))   // swipe left = the next day
+        }) { change, amount -> dx += amount; change.consume() }
+    }
+    AnimatedContent(targetState = day, modifier = Modifier.fillMaxSize().then(swipe).testTag("today-pager"), label = "day",
+        transitionSpec = {
+            val dir = if (targetState > initialState) 1 else -1                // a later day comes in from the right
+            val move = spring<androidx.compose.ui.unit.IntOffset>(dampingRatio = 0.86f, stiffness = 420f)
+            (slideInHorizontally(move) { w -> dir * w / 4 } + fadeIn(spring(stiffness = 420f))) togetherWith
+                (slideOutHorizontally(move) { w -> -dir * w / 4 } + fadeOut(spring(stiffness = 600f)))
+        }) { d ->
+        if (d == tk) TodayList(go = go, onEdit = { editing = it }) else DayList(d, tk, go = go, onEdit = { editing = it })
+    }
+    editing?.let { t -> TaskSheet(t, onClose = { editing = null }) }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun TodayList(go: (String) -> Unit, onEdit: (Task) -> Unit) {
     val c = LocalCtx.current
     val s = c.snap
     val tk = Dates.todayKey()
@@ -86,17 +128,15 @@ fun TodayScreen() {
     fun quickAdd(title: String, goalId: String? = null, dur: Int? = null) = c.app.store.save("tasks", buildJsonObject {
         put("id", uid()); put("title", title); put("priority", 2); put("dueDate", tk); put("dueTime", JsonNull); put("durationMin", dur); put("reminder", false); put("status", "open"); put("doneAt", JsonNull); put("goalId", goalId) })
     val sub = Engine.todayLine(s, a, todays.size, nDone, open.size, mvd = mvdOn)
-    var editing by remember { mutableStateOf<Task?>(null) }
     var showDone by rememberSaveable { mutableStateOf(false) }
     var showLater by rememberSaveable { mutableStateOf(false) }
     val name = s.profile.str("name")
 
     LazyColumn(Modifier.fillMaxSize().testTag("today"), contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 6.dp, bottom = 170.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item(key = "head") {
-            if (name != null) PageHead(Dates.longDate().replace(",", ",").uppercase(), Dates.greeting() + ", ", name, ".", sub, subTag = "today-sub",
-                trailing = { val countable = todays.count { it.status != "skipped" }; Spacer(Modifier.width(10.dp)); Ring(if (countable == 0) 0f else nDone.toFloat() / countable, "$nDone") })
-            else PageHead(Dates.longDate().uppercase(), Dates.greeting(), "", ".", sub, subTag = "today-sub",
-                trailing = { val countable = todays.count { it.status != "skipped" }; Spacer(Modifier.width(10.dp)); Ring(if (countable == 0) 0f else nDone.toFloat() / countable, "$nDone") })
+            val countable = todays.count { it.status != "skipped" }
+            DayPageHead(tk, tk, go, if (name != null) Dates.greeting() + ", " else Dates.greeting(), name ?: "", ".", sub, subTag = "today-sub",
+                trailing = { Spacer(Modifier.width(10.dp)); Ring(if (countable == 0) 0f else nDone.toFloat() / countable, "$nDone") })
         }
         item(key = "composer") { Composer() }
         if (todays.any { it.dueTime != null }) item(key = "daystrip") { DayStrip(todays, s.profile.str("wake") ?: "07:00", s.profile.str("sleep") ?: "23:30") }
@@ -106,7 +146,7 @@ fun TodayScreen() {
                 Text(carry.take(3).joinToString(" · ") { it.title } + if (carry.size > 3) " · +${carry.size - 3} more" else "", style = Type.small, color = P.muted, maxLines = 2, modifier = Modifier.padding(top = 2.dp))
                 Spacer(Modifier.height(10.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    PrimaryButton("Bring forward") { val prev = carry.map { it.raw }; carry.forEach { t -> c.app.store.save("tasks", t.raw.with("dueDate" to tk, "carried" to true)) }; c.toast("Moved to today.") { prev.forEach { r -> c.app.store.save("tasks", r) } } }
+                    PrimaryButton("Bring forward") { val prev = carry.map { it.raw }; carry.forEach { t -> c.app.store.save("tasks", t.raw.with("dueDate" to tk, "carried" to true, "carriedFrom" to (t.raw.str("carriedFrom") ?: t.dueDate))) }; c.toast("Moved to today.") { prev.forEach { r -> c.app.store.save("tasks", r) } } }
                     GhostButton(if (carry.size == 1) "Let it go" else "Let them go") { val prev = carry.map { it.raw }; carry.forEach { t -> c.app.store.save("tasks", t.raw.with("letGo" to true, "status" to "skipped")) }; c.toast("Let go. Fresh start.") { prev.forEach { r -> c.app.store.save("tasks", r) } } }
                 }
             }
@@ -136,14 +176,14 @@ fun TodayScreen() {
         if (mvdOn && open.isNotEmpty()) {
             val picks = Engine.mvdPicks(open); val rest = open.filter { it !in picks }
             item(key = "sh-mvd") { SectionHead("Just these today", action = "Show full day", onAction = { setL("mvdDay", null) }) }
-            items(picks, key = { "t-" + it.id }) { t -> TaskRow(t, s, Modifier.animateItem(), onEdit = { editing = t }) }
+            items(picks, key = { "t-" + it.id }) { t -> TaskRow(t, s, Modifier.animateItem(), onEdit = { onEdit(t) }) }
             if (rest.isNotEmpty()) {
                 item(key = "sh-rest") { Disclosure("Everything else can wait · ${rest.size}", showRest) { showRest = !showRest } }
-                if (showRest) items(rest, key = { "r-" + it.id }) { t -> TaskRow(t, s, Modifier.animateItem().graphicsLayer { alpha = 0.7f }, onEdit = { editing = t }) }
+                if (showRest) items(rest, key = { "r-" + it.id }) { t -> TaskRow(t, s, Modifier.animateItem().graphicsLayer { alpha = 0.7f }, onEdit = { onEdit(t) }) }
             }
         } else if (open.isNotEmpty()) {
             item(key = "sh-today") { SectionHead("Today", "${open.size} open") }
-            items(open, key = { "t-" + it.id }) { t -> TaskRow(t, s, Modifier.animateItem(), onEdit = { editing = t }) }
+            items(open, key = { "t-" + it.id }) { t -> TaskRow(t, s, Modifier.animateItem(), onEdit = { onEdit(t) }) }
         } else if (todays.isEmpty()) item(key = "empty") {
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
                 EmptyNote("A clear page.", "Add one small thing above, or hold Ask and just say it.")
@@ -156,14 +196,14 @@ fun TodayScreen() {
         else item(key = "allDone") { EmptyNote("That's the day.", if (a.streakCurrent >= 2) "${a.streakCurrent} days in a row now." else "Be proud of that, and rest.") }
         if (later.isNotEmpty()) {
             item(key = "sh-later") { Disclosure("Next 7 days · ${later.size}", showLater) { showLater = !showLater } }
-            if (showLater) items(later, key = { "l-" + it.id }) { t -> TaskRow(t, s, Modifier.animateItem(), showDate = true, onEdit = { editing = t }) }
+            if (showLater) items(later, key = { "l-" + it.id }) { t -> TaskRow(t, s, Modifier.animateItem(), showDate = true, onEdit = { onEdit(t) }) }
         }
         if (done.isNotEmpty()) {
             item(key = "sh-done") { Disclosure("Done & skipped · ${done.size}", showDone) { showDone = !showDone } }
-            if (showDone) items(done, key = { "d-" + it.id }) { t -> TaskRow(t, s, Modifier.animateItem(), onEdit = { editing = t }) }
+            if (showDone) items(done, key = { "d-" + it.id }) { t -> TaskRow(t, s, Modifier.animateItem(), onEdit = { onEdit(t) }) }
         }
+        item(key = "yesterday") { YesterdayRow(s.tasks, tk, go) }
     }
-    editing?.let { t -> TaskSheet(t, onClose = { editing = null }) }
 }
 
 @Composable
@@ -243,7 +283,7 @@ fun Disclosure(label: String, open: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-fun TaskRow(t: Task, s: Snapshot, modifier: Modifier = Modifier, showDate: Boolean = false, onEdit: () -> Unit) {
+fun TaskRow(t: Task, s: Snapshot, modifier: Modifier = Modifier, showDate: Boolean = false, note: String? = null, moved: Boolean = false, onEdit: () -> Unit) {
     val c = LocalCtx.current
     val goal = t.goalId?.let { id -> s.goals.firstOrNull { it.id == id } }
     val shape = RoundedCornerShape(16.dp)
@@ -253,14 +293,15 @@ fun TaskRow(t: Task, s: Snapshot, modifier: Modifier = Modifier, showDate: Boole
                 CheckDot(done = t.isDone) { setStatus(c, t, if (t.isOpen) "done" else "open") }
                 Column(Modifier.weight(1f).padding(vertical = 10.dp)) {
                     Text(t.title, style = Type.bodyM.copy(fontSize = 16.sp), color = if (t.isOpen) P.ink else P.muted, textDecoration = if (t.isDone) TextDecoration.LineThrough else null, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    val bits = listOfNotNull(if (t.raw.bool("carried") == true && t.isOpen) "carried over" else null, if (showDate) Dates.fmtDateKey(t.dueDate) else null, t.dueTime?.let { Dates.fmtTime(it) }, t.durationMin?.let { "$it min" }, if (t.status == "skipped") "skipped" else null)
-                    if (bits.isNotEmpty() || goal != null) Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 2.dp)) {
+                    val bits = listOfNotNull(if (t.raw.bool("carried") == true && t.isOpen && !moved) "carried over" else null, if (showDate) Dates.fmtDateKey(t.dueDate) else null, if (note != null && t.isDone) null else t.dueTime?.let { Dates.fmtTime(it) }, t.durationMin?.let { "$it min" }, if (t.status == "skipped") "skipped" else null)
+                    if (bits.isNotEmpty() || goal != null || note != null) Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 2.dp)) {
+                        if (note != null) { Text(note, style = Type.small, color = if (moved) P.accent else P.muted, maxLines = 1, modifier = Modifier.testTag("task-note")); if (bits.isNotEmpty()) Spacer(Modifier.width(8.dp)) }
                         if (t.reminder && t.dueTime != null && t.isOpen) { Icon(Icons.Outlined.Notifications, "Reminder on", tint = P.muted, modifier = Modifier.size(13.dp)); Spacer(Modifier.width(3.dp)) }
                         if (bits.isNotEmpty()) Text(bits.joinToString("  "), style = Type.small, color = P.muted, maxLines = 1)
                         if (goal != null) { Spacer(Modifier.width(10.dp)); Text(goal.title, style = Type.small, color = P.accent, maxLines = 1, overflow = TextOverflow.Ellipsis) }
                     }
                 }
-                if (t.isOpen && t.dueDate != null) IconButton(onClick = {
+                if (t.isOpen && t.dueDate != null && !moved) IconButton(onClick = {
                     val prev = t.raw; val tomorrow = Dates.keyAdd(Dates.todayKey(), 1)
                     c.app.store.save("tasks", t.raw.with("dueDate" to if (t.dueDate!! >= tomorrow) Dates.keyAdd(t.dueDate!!, 1) else tomorrow))
                     c.toast("Moved to tomorrow.") { c.app.store.save("tasks", prev) }

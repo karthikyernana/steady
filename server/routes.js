@@ -6,7 +6,7 @@ import { migrate } from './migrate.js';
 import { sendDue, vapidReady } from './push.js';
 import { triggerFor, triggerMode } from './trigger.js';
 import { AgentError, agentConfig, countUse, transcribe, plan, learnFrom, getMemory, memorySummary, resetMemory } from './agent.js';
-import { chat, chatConfig, listChats, getChat, deleteChat, renameChat } from './chat.js';
+import { chat, chatConfig, listChats, getChat, deleteChat, renameChat, starter } from './chat.js';
 
 const COLLS = new Set(['tasks', 'goals', 'thoughts', 'checkins', 'meta', 'money']);
 const MAX_BODY = 2_000_000;
@@ -50,6 +50,16 @@ function requireCsrf(req) {
 const safeEq = (a, b) => { const x = Buffer.from(String(a)), y = Buffer.from(String(b)); return x.length === y.length && timingSafeEqual(x, y); };
 const ipOf = req => String(req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '').split(',')[0].trim() || null;
 
+// An owner row without a password that has already been used (it signed in with Google, so it has sessions or data)
+// must never be claimable by "creating" a password for its email: that would hand its data to whoever typed the email.
+// A pre-provisioned, never-used row (old allow-list instances) can still get its first password through sign-up.
+const GOOGLE_ONLY = 'This email signs in with Google. Continue with Google, then add a password in You.';
+async function claimed(o) {
+  if (!o || o.password_hash) return false;
+  if ((await query('select 1 from sessions where owner_id = $1 limit 1', [o.id])).rows.length) return true;
+  return withOwner(o.id, async c => (await c.query('select 1 from records where owner_id = app_owner() limit 1')).rows.length > 0);
+}
+
 const REVOKED = 'This device was signed out from another device.';
 async function me(req) {
   const o = await currentOwner(req);
@@ -77,6 +87,7 @@ const routes = {
     if (!validEmail(email)) fail(400, 'Enter a valid email address.');
     if (await tooManyAttempts(ipOf(req))) fail(429, 'Too many attempts. Try again in an hour.');
     const o = await findOwner(email);
+    if (await claimed(o)) return { exists: false, canCreate: false, google: true };
     return { exists: !!o?.password_hash, canCreate: !o?.password_hash && mayCreate(email) };
   },
 
@@ -90,6 +101,7 @@ const routes = {
     if (password.length > 200) fail(400, 'That password is too long.');
     const existing = await findOwner(email);
     if (existing?.password_hash) fail(409, 'There is already an account with this email. Sign in instead.');
+    if (await claimed(existing)) fail(409, GOOGLE_ONLY);
     if (!mayCreate(email)) fail(403, 'Sign-ups are closed on this Steady.');
     if (existing) { await setPassword(existing.id, password); if (name) await query('update owners set name = $2 where id = $1', [existing.id, name]); }
     else await createOwner(email, password, name);
@@ -100,10 +112,10 @@ const routes = {
   'POST auth/login': async (req, res, body) => {
     requireCsrf(req);
     const ip = ipOf(req);
-    if (await tooManyAttempts(ip)) fail(429, 'Too many attempts. Try again in an hour.');
+    if (await tooManyAttempts(ip, body.email)) fail(429, 'Too many attempts. Try again in an hour.');
     const o = await findOwner(body.email);
     const ok = !!o?.password_hash && checkPassphrase(String(body.password || ''), o.password_hash);
-    await logAttempt(ip, ok);
+    await logAttempt(ip, ok, body.email);
     if (!ok) fail(401, 'That email and password do not match.');
     const s = await startSession(res, req, o.email, body.device);
     return { signedIn: true, email: s.email };
@@ -222,13 +234,17 @@ const routes = {
       for (const r of up) {
         if (typeof r.key === 'string' && r.key.startsWith('st-checkin-')) continue;
         if (typeof r.key !== 'string' || !r.key || !Number.isFinite(r.fireAt) || typeof r.title !== 'string') fail(400, 'Malformed reminder');
+        // moved to another time: an old snooze of it would ring at the old time + N min, so it goes
+        if (!r.key.endsWith('~snooze')) await c.query(`delete from scheduled_notifications where owner_id = app_owner() and key = $1 || '~snooze'
+            and exists (select 1 from scheduled_notifications b where b.owner_id = app_owner() and b.key = $1 and b.fire_at is distinct from to_timestamp($2 / 1000.0))`, [r.key.slice(0, 152), r.fireAt]);
         await c.query(
           `insert into scheduled_notifications (owner_id, key, fire_at, title, body, url, tag) values ($1, $2, to_timestamp($3 / 1000.0), $4, $5, $6, $7)
            on conflict (owner_id, key) do update set fire_at = excluded.fire_at, title = excluded.title, body = excluded.body, url = excluded.url, tag = excluded.tag,
              sent_at = case when scheduled_notifications.fire_at is distinct from excluded.fire_at then null else scheduled_notifications.sent_at end`,
           [o.id, r.key.slice(0, 160), r.fireAt, r.title.slice(0, 200), String(r.body || '').slice(0, 500), r.url || null, r.tag || null]);
       }
-      if (del.length) await c.query('delete from scheduled_notifications where owner_id = app_owner() and key = any($1)', [del]);
+      // a reminder that goes (task done, deleted, reminder off) takes its pending snooze with it, or the snooze still fires
+      if (del.length) await c.query("delete from scheduled_notifications where owner_id = app_owner() and (key = any($1) or (key like '%~snooze' and left(key, -7) = any($1)))", [del]);
       // the evening check-in nudge is retired (v1.4): drop any still-queued ones, whichever client queued them
       await c.query("delete from scheduled_notifications where owner_id = app_owner() and key like 'st-checkin-%' and sent_at is null");
     });
@@ -345,6 +361,7 @@ const routes = {
     return chat(o.id, { chatId: body.chatId || null, message: body.message, tz: body.tz });
   },
   'GET agent/chats': async req => { const o = await me(req); return listChats(o.id); },
+  'GET agent/chat/starter': async req => { const o = await me(req); return starter(o.id, { tz: new URL(req.url, 'http://x').searchParams.get('tz') }); },
   'GET agent/chats/:id': async req => { const o = await me(req); return getChat(o.id, req.params.id, new URL(req.url, 'http://x').searchParams.get('tz')); },
   'PATCH agent/chats/:id': async (req, res, body) => { requireCsrf(req); const o = await me(req); return renameChat(o.id, req.params.id, body && body.title); },
   'DELETE agent/chats/:id': async req => { requireCsrf(req); const o = await me(req); return deleteChat(o.id, req.params.id); },
@@ -382,6 +399,6 @@ export async function handle(req, res) {
   } catch (e) {
     const status = e.status || (e.code === '42501' ? 403 : 500);
     if (status >= 500) console.error('[steady api]', e);
-    return send(res, status, { error: status >= 500 && !e.public ? 'Server error' : e.message, ...(e.revoked ? { revoked: true } : {}) });
+    return send(res, status, { error: status >= 500 && !e.public ? 'Server error' : e.message, ...(e.revoked ? { revoked: true } : {}), ...(Array.isArray(e.reasons) ? { reasons: e.reasons.slice(0, 10) } : {}) });
   }
 }

@@ -3,6 +3,28 @@
 All notable changes to Steady. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 The data contract has its own version (`schemaVersion`, see docs/DATA_MODEL.md); an app release that changes it must ship a migration.
 
+## [1.6.0] - 2026-10-21
+
+### Changed (chat server)
+- Chat answers show first: every answer about your data carries a card. The model is asked to, and if it does not, the
+  server picks one from the queries it ran (count → Stat, over time → Bar/Line, shares → Donut, lists → TaskList /
+  Timeline, goals → ProgressList).
+- Stat cards compare with the period just before (yesterday, same point last week, last month to date) and carry a
+  7-day sparkline; day and week charts include every day/week of the period, zero ones too, with short labels.
+- One system prompt (`server/chat-prompt.js`) built from published agent-prompting guidance, with a small, bounded
+  picture of your data (counts, today's tasks, goals, top tags and categories) instead of raw data.
+- Tool calls of one step run in parallel; one data read per collection per request; leaner tool schemas and tool results
+  within a per-round budget (fewer free-tier rate-limit failures). A 502 now says which providers were rate-limited.
+
+### Added (chat server)
+- Follow-up suggestions (`suggestions`, up to 3 short prompts) on every answer, stored with the message.
+- `GET /api/agent/chat/starter`: a headline card and 3-4 chips for an empty chat, computed without a model call.
+- `search` tool: hybrid retrieval over thoughts, tasks and money notes (Postgres full-text + trigram typo matching +
+  optional Gemini embeddings in pgvector, merged by reciprocal rank fusion). `search_thoughts` stays as an alias.
+- Migration `0010_chat_search.sql` (additive): `agent_messages.suggestions`, `pg_trgm`, search indexes, optional
+  `vector` + `record_embeddings` (RLS). Embeddings back-fill a few per chat turn and never block it.
+- Eval set `tests/api/chat-evals.mjs` (16 questions, mock or preview).
+
 ## [1.5.0] - 2026-10-21
 
 ### Fixed

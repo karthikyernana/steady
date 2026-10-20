@@ -7,7 +7,7 @@ import { permission, requestPermission, showLocal, ntfyPublish, reconcileNtfy, r
 import { downloadExport, importJSON } from '../../data/backup.js';
 import { agentMemory, resetAgentMemory } from '../../data/agent.js';
 
-export const APP_VERSION = '1.5.0';
+export const APP_VERSION = '1.6.0';
 let cfg = local('serverConfig') || null;
 serverConfig().then(c => { const changed = JSON.stringify(c) !== JSON.stringify(cfg); cfg = c; if (changed) requestRender(); }).catch(() => {});
 
@@ -272,7 +272,7 @@ export async function openSignIn(onDone) {
           email = f.email.value.trim().toLowerCase();
           if (!/^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(email)) { err('Enter a valid email address.'); f.email.focus(); return; }
           const btn = f.querySelector('[type=submit]'); busy(btn, true, 'Checking…');
-          try { const r = await checkEmail(email); r.exists ? showPassword() : r.canCreate ? showCreate() : err('Sign-ups are closed on this Steady.'); }
+          try { const r = await checkEmail(email); r.exists ? showPassword() : r.canCreate ? showCreate() : err(r.google ? 'This email signs in with Google. Use Continue with Google, then add a password in You.' : 'Sign-ups are closed on this Steady.'); }
           catch (x) { err(x.message); } finally { if (btn.isConnected) busy(btn, false, 'Continue'); }
         });
         f.email.focus();

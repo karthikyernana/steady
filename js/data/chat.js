@@ -25,3 +25,7 @@ export const renameChat = (id, title) => api('PATCH', `agent/chats/${encodeURICo
 // The last chat seen on this device (with its resolved cards, as they were), shown read-only when offline.
 export const lastChat = () => local('chatLast', null);
 export const rememberChat = chat => setLocal('chatLast', chat ? { ...chat, savedAt: Date.now() } : null);
+
+// 1.6: the empty-chat headline + starter chips, computed from the user's data on the server (no model call).
+// An older server answers 404; the view then shows its plain empty state.
+export const getStarter = () => api('GET', `agent/chat/starter?tz=${encodeURIComponent(tz())}`);

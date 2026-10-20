@@ -13,13 +13,15 @@
 // Several chats can be in flight at once: each question keeps running in ITS chat while you switch, start a new one or
 // type elsewhere; its reply lands there (History shows it as typing, then as new).
 import { I } from '../icons.js';
-import { esc } from '../../core/util.js';
+import { esc, greeting } from '../../core/util.js';
 import { actions, toast, confirmSheet, openSheet } from '../ui.js';
 import { openVoice } from '../voice.js';
 import { renderCards } from '../cards.js';
+import { revealHtml, plain, arrive, arriveCards } from '../chat-fx.js';
+
 import * as motion from '../motion.js';
-import { local, setLocal } from '../../data/store.js';
-import { chatBlocker, sendChat, listChats, getChat, deleteChat, renameChat, lastChat, rememberChat } from '../../data/chat.js';
+import { local, setLocal, meta } from '../../data/store.js';
+import { chatBlocker, sendChat, listChats, getChat, deleteChat, renameChat, lastChat, rememberChat, getStarter } from '../../data/chat.js';
 import { friendlyError, historyItems, atBottom, appendUnique } from '../../core/chat-ui.js';
 
 // empty state: chart-worthy asks; "What did I write about…" fills the box so you finish the sentence
@@ -39,7 +41,7 @@ const wideMq = matchMedia('(min-width: 960px)');
 // ---------------------------------------------------------------- state: one conversation per chat, keyed locally
 // conv: { key, id (server id once known), title, msgs, pending: { text, at } | null, err: { msg, retry, text } | null,
 //         loaded, loading, unread, draft (what was typed here), scroll (px from the bottom when you left it), updatedAt }
-const S = { convs: new Map(), cur: null, list: null, listing: false, off: false, blocker: null, open: false, hist: false, seq: 0, stick: false, rendered: new Map(), sig: '' };
+const S = { convs: new Map(), cur: null, list: null, listing: false, off: false, blocker: null, open: false, hist: false, seq: 0, stick: false, rendered: new Map(), sig: '', starter: null, starting: false };
 let histSheet = null, panel = null;
 const newConv = (o = {}) => { const c = { key: `c${++S.seq}`, id: null, title: null, msgs: [], pending: null, err: null, loaded: true, loading: false, unread: false, draft: '', scroll: null, follow: true, updatedAt: 0, ...o }; S.convs.set(c.key, c); return c; };
 const cv = () => S.convs.get(S.cur) || (S.cur = newConv().key, S.convs.get(S.cur));
@@ -63,15 +65,62 @@ async function loadList() {
 
 const time = ms => { if (!ms) return ''; const d = new Date(ms), now = new Date(); const same = d.toDateString() === now.toDateString();
   return same ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : d.toLocaleDateString([], { day: 'numeric', month: 'short' }); };
-const paras = t => esc(t).split(/\n{2,}/).map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('');
+// a quiet time line above a message when the chat starts or after a pause of 15+ minutes
+const stamp = ms => { if (!ms) return ''; const d = new Date(ms), now = new Date(), y = new Date(now); y.setDate(now.getDate() - 1);
+  const t = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const day = d.toDateString() === now.toDateString() ? 'Today' : d.toDateString() === y.toDateString() ? 'Yesterday' : d.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' });
+  return `${day} · ${t}`; };
+const GAP = 15 * 60e3;
+// Steady's mark beside its answers (the app icon, small)
+const MARK = '<svg viewBox="0 0 64 64" aria-hidden="true" class="mark"><rect width="64" height="64" rx="18" class="mark-bg"/><path d="M16 40c6-9 11-9 16 0s10 9 16 0" class="mark-wave"/><circle cx="32" cy="22" r="4.5" class="mark-dot"/></svg>';
+const avatar = () => `<span class="cm-av" aria-hidden="true">${MARK}</span>`;
 
-function message(m, fresh) {
-  const k = esc(m.id || ''), nw = fresh ? ' cm-new' : '';
-  if (m.role === 'user') return `<div class="cm cm-user${nw}" data-k="m-${k}" data-testid="chat-msg-user"><div class="cm-bubble">${paras(m.text)}</div></div>`;
-  return `<div class="cm cm-agent${nw}" data-k="m-${k}" data-testid="chat-msg-agent"><div class="cm-text">${paras(m.text)}</div>
-    ${m.cards?.length ? `<div class="cm-cards" data-testid="chat-cards">${renderCards(m.cards)}</div>` : ''}</div>`;
+// Chips under the latest answer: the server's suggestions (1.6); an older server sends none, so a few follow-ups are
+// offered from what the answer was about.
+const FOLLOW = { query_money: ['Compare with last week', 'Biggest category this month?'], query_tasks: ['What’s due tomorrow?', 'What did I finish this week?'],
+  query_goals: ['Which goal is behind?'], query_thoughts: ['What else did I write lately?'], search_thoughts: ['What else did I write lately?'], get_insights_summary: ['When am I most productive?'] };
+function chipsFor(m, asked) {
+  if (Array.isArray(m.suggestions)) return m.suggestions.filter(x => typeof x === 'string' && x.trim()).slice(0, 3);
+  const out = [];
+  for (const c of m.cards || []) for (const q of FOLLOW[c.query?.tool] || []) if (!out.includes(q) && q.toLowerCase() !== String(asked || '').toLowerCase()) out.push(q);
+  return out.slice(0, 3);
 }
-const waiting = () => `<div class="cm cm-agent cm-wait" data-k="m-wait" role="status" data-testid="chat-wait"><span class="cm-dots" aria-hidden="true"><i></i><i></i><i></i></span><span>Looking at your data…</span></div>`;
+const chips = qs => (qs.length ? `<div class="chat-chips" role="group" aria-label="Suggested questions" data-testid="chat-chips">${qs.map(q => `<button type="button" class="chip-btn" data-act="chat-suggest" data-q="${esc(q)}" data-testid="chat-chip">${esc(q)}</button>`).join('')}</div>` : '');
+
+const hash = str => { let h = 5381; for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0; return (h >>> 0).toString(36); };
+function message(m, fresh, extra = '') {
+  const k = `${esc(m.id || '')}" data-sig="${hash(`${m.role}|${m.text}|${JSON.stringify(m.cards || [])}|${extra}`)}`, nw = fresh ? ' cm-new' : '';
+  if (m.role === 'user') return `<div class="cm cm-user${nw}" data-k="m-${k}" data-testid="chat-msg-user"><div class="cm-bubble">${plain(m.text)}</div></div>`;
+  const r = revealHtml(m.text, fresh);
+  return `<div class="cm cm-agent${nw}${fresh && r.ms ? ' cm-reveal' : ''}" data-k="m-${k}" data-testid="chat-msg-agent" data-reveal="${r.ms}">${avatar()}<div class="cm-main">
+    ${m.text ? `<div class="cm-text">${r.html}</div>` : ''}
+    ${m.cards?.length ? `<div class="cm-cards" data-testid="chat-cards">${renderCards(m.cards)}</div>` : ''}${extra}</div></div>`;
+}
+const waiting = () => `<div class="cm cm-agent cm-wait" data-k="m-wait" role="status" data-testid="chat-wait">${avatar()}<div class="cm-typing" data-testid="chat-typing"><span class="cm-dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="sr-only">Steady is looking at your data…</span></div></div>`;
+
+// ---------------------------------------------------------------- empty state: a greeting, today's headline, starter chips
+// The headline and chips come from GET agent/chat/starter (no model call). Without it (older server, offline, an error)
+// the plain greeting and the built-in chart-worthy asks show instead.
+const STARTER_TTL = 5 * 60e3;
+async function loadStarter() {
+  if (S.starting || (S.starter && Date.now() - S.starter.at < STARTER_TTL)) return;
+  S.starting = true;
+  try { const r = await getStarter(); S.starter = { at: Date.now(), text: String(r?.text || ''), cards: Array.isArray(r?.cards) ? r.cards.slice(0, 2) : [], suggestions: Array.isArray(r?.suggestions) ? r.suggestions.filter(x => typeof x === 'string' && x.trim()).slice(0, 4) : [] }; }
+  catch (e) { if (e?.status !== 404) console.warn('[chat] starter failed', e?.status, e?.message); S.starter = { at: Date.now(), failed: true, text: '', cards: [], suggestions: [] }; }
+  S.starting = false;
+  if (S.open) paint();
+}
+function emptyState() {
+  const name = (meta('profile') || {}).name, st = S.starter;
+  const qs = st?.suggestions?.length ? st.suggestions.slice(0, 3).map(q => ({ q })) : SUGGEST.filter(x => !x.fill);
+  const all = [...qs, SUGGEST.find(x => x.fill)];
+  const head = st?.cards?.length || st?.text ? `<div class="chat-starter" data-testid="chat-starter">${st.text ? `<p class="chat-starter-line">${esc(st.text)}</p>` : ''}${st.cards?.length ? `<div class="cm-cards">${renderCards(st.cards)}</div>` : ''}</div>` : '';
+  return `<section class="chat-empty" data-testid="chat-empty"><div class="chat-hello">${avatar()}<div><h2 class="chat-hello-h">${esc(greeting())}${name ? `, ${esc(String(name).split(' ')[0])}` : ''}.</h2>
+      <p class="muted">Ask about your tasks, goals, money and thoughts. Answers come from your own data, with charts where they help.</p></div></div>
+    ${head}
+    <div class="chat-suggest chat-chips" data-testid="chat-starter-chips">${all.map(s => `<button type="button" class="chip-btn" data-act="chat-suggest" data-q="${esc(s.q)}"${s.fill ? ' data-fill="1"' : ''}>${esc(s.label || s.q)}</button>`).join('')}</div>
+    <p class="hint">Chat can read, not change. To add or edit, hold the Ask button on any tab and say it, or use Today.</p></section>`;
+}
 
 // ---------------------------------------------------------------- history (phones: a bottom sheet; desktop: inside the panel)
 function historyList() {
@@ -111,7 +160,13 @@ function paintHistory() {
 function skeleton() {
   return `<div class="chat-resize" data-testid="chat-resize" aria-hidden="true" title="Drag to resize"></div>
     <header class="chat-head" data-testid="chat-head"><span class="chat-grab" aria-hidden="true"></span>
-      <h1 class="display chat-title" data-testid="chat-title" id="chat-title"></h1></header>
+      <span class="chat-head-mark" aria-hidden="true">${MARK}</span>
+      <div class="chat-head-text"><span class="chat-brand">Steady</span><h1 class="chat-title" data-testid="chat-title" id="chat-title"></h1></div>
+      <div class="chat-head-actions" role="toolbar" aria-label="Chat">
+        <button type="button" class="icon-btn chat-hist-btn" data-act="chat-hist" aria-haspopup="dialog" aria-expanded="false" aria-label="History" title="History" data-testid="chat-hist-btn">${I.history}</button>
+        <button type="button" class="icon-btn chat-new-btn" data-act="chat-new" aria-label="New chat" title="New chat" data-testid="chat-new">${I.plus}</button>
+        <button type="button" class="icon-btn chat-close" data-act="chat-close" data-testid="chat-close" aria-label="Close chat" title="Close (Esc)">${I.close}</button>
+      </div></header>
     <div class="chat-body">
       <div class="chat-scroll" data-testid="chat-main" tabindex="-1"><div class="chat-stack">
         <div class="chat-top"></div><div class="chat-thread" data-testid="chat-thread" aria-live="polite"></div></div></div>
@@ -119,11 +174,6 @@ function skeleton() {
       <section class="chat-hist-pane" data-testid="chat-hist-pane" aria-label="Chat history" hidden><div class="chat-hist-pane-head"><span class="eyebrow">History</span></div><div class="chat-hist-pane-body"></div></section>
     </div>
     <div class="chat-dock" data-testid="chat-dock">
-      <div class="chat-controls" role="toolbar" aria-label="Chat">
-        <button type="button" class="btn ghost sm chat-hist-btn" data-act="chat-hist" aria-haspopup="dialog" aria-expanded="false" data-testid="chat-hist-btn">${I.history}<span>History</span></button>
-        <button type="button" class="btn ghost sm chat-new-btn" data-act="chat-new" data-testid="chat-new">${I.plus}<span>New</span></button>
-        <button type="button" class="btn ghost sm chat-close" data-act="chat-close" data-testid="chat-close" aria-label="Close chat">${I.down}<span>Close</span></button>
-      </div>
       <form class="chat-composer" id="chat-form" data-testid="chat-composer" autocomplete="off">
         <textarea id="chat-input" rows="1" maxlength="1000" aria-label="Ask about your data" placeholder="Ask about your data…" enterkeyhint="send"></textarea>
         <button type="button" class="chat-mic" data-act="chat-mic" aria-label="Dictate your question" title="Dictate (V)" data-testid="chat-mic">${I.mic}</button>
@@ -141,7 +191,7 @@ function ensurePanel() {
   grow(ta);
   ta.addEventListener('input', () => { grow(ta); cv().draft = ta.value; syncSend(); });
   ta.addEventListener('keydown', e => {
-    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && (e.metaKey || e.ctrlKey || matchMedia('(pointer:fine)').matches)) { e.preventDefault(); form.requestSubmit(); } });
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); form.requestSubmit(); } });
   form.addEventListener('submit', e => { e.preventDefault(); send(ta.value); });
   const sc = scroller();
   // following: the thread keeps the newest message in view until you scroll UP yourself (our own scrolls only go down)
@@ -205,6 +255,26 @@ function modality() {
 /** app.js calls this on every render while Chat is open (sign-in, connection and data changes). */
 export function paintChat() { if (S.open) paint(); }
 
+// Keyed patch: a message whose markup did not change keeps its DOM (its cards and charts are not parsed and drawn again),
+// so a new answer costs only its own nodes. Fresh messages always get new nodes (and their entrance).
+const drawn = new WeakMap();
+function patchThread(th, parts, reset) {
+  if (reset) { th.innerHTML = parts.join(''); [...th.children].forEach((n, i) => drawn.set(n, parts[i])); return [...th.children]; }
+  const made = [];
+  const old = new Map([...th.children].map(n => [n.dataset.k, n]));
+  const tpl = document.createElement('template');
+  let prev = null;
+  for (const html of parts) {
+    const k = /data-k="([^"]*)"/.exec(html)?.[1], sig = /data-sig="([^"]*)"/.exec(html)?.[1];
+    let n = k != null ? old.get(k) : null;
+    if (n && (sig ? n.dataset.sig === sig : drawn.get(n) === html)) old.delete(k);
+    else { tpl.innerHTML = html; n = tpl.content.firstElementChild; drawn.set(n, html); made.push(n); }
+    if ((prev ? prev.nextElementSibling : th.firstElementChild) !== n) th.insertBefore(n, prev ? prev.nextElementSibling : th.firstElementChild);
+    prev = n;
+  }
+  if (prev) while (prev.nextElementSibling) prev.nextElementSibling.remove(); else th.textContent = '';
+  return made;
+}
 function paint(force = false) {
   if (!panel) return;
   S.blocker = S.off ? 'off' : chatBlocker();
@@ -213,34 +283,49 @@ function paint(force = false) {
   const offlineCopy = S.blocker === 'offline' && !c.msgs.length ? lastChat() : null;
   const msgs = offlineCopy ? offlineCopy.messages || [] : c.msgs;
   const title = offlineCopy ? offlineCopy.chat?.title : titleOf(c) || c.pending?.text;     // a new chat is named by its question at once
-  const tEl = panel.querySelector('.chat-title'), tHtml = title ? esc(title) : 'Ask about <em>your data</em>.';
+  const tEl = panel.querySelector('.chat-title'), tHtml = title ? esc(title) : 'New chat';
   if (tEl.innerHTML !== tHtml) tEl.innerHTML = tHtml;
   // top: blocked note / offline copy / empty state
   const blocked = S.blocker ? BLOCK[S.blocker] : null;
   let top = '';
   if (blocked) top += `<section class="card soft chat-note" data-testid="chat-blocked"><h2 class="card-title">${esc(blocked[0])}</h2><p class="muted">${esc(blocked[1])}</p>${blocked[2] ? `<div class="row gap mt">${blocked[2]}</div>` : ''}</section>`;
   if (offlineCopy && msgs.length) top += '<p class="muted small chat-offline-copy">Your last chat, as it was when you saw it.</p>';
-  if (!msgs.length && !c.pending && !blocked && !c.loading && !c.err) {
-    top += `<section class="chat-empty"><p class="muted">Ask anything about your tasks, goals, money and thoughts. Answers come from your own data, with charts where they help.</p>
-      <div class="chat-suggest">${SUGGEST.map(s => `<button type="button" class="chip-btn" data-act="chat-suggest" data-q="${esc(s.q)}"${s.fill ? ' data-fill="1"' : ''}>${esc(s.label || s.q)}</button>`).join('')}</div>
-      <p class="hint">Chat can read, not change. To add or edit, hold the Ask button on any tab and say it, or use Today.</p></section>`;
-  }
+  const isEmpty = !msgs.length && !c.pending && !blocked && !c.loading && !c.err;
+  if (isEmpty) top += emptyState();
   if (c.loading && !c.loaded) top += '<div class="chat-loading" role="status" data-testid="chat-loading"><span class="vx-spin" aria-hidden="true"></span><span>Opening that chat…</span></div>';
-  const topEl = panel.querySelector('.chat-top'); if (topEl.innerHTML !== top) topEl.innerHTML = top;
+  const topEl = panel.querySelector('.chat-top');
+  if (topEl.dataset.sig !== top) { const was = topEl.dataset.starter; topEl.innerHTML = top; topEl.dataset.sig = top; topEl.dataset.starter = S.starter?.at || '';
+    if (isEmpty && S.starter?.at && String(S.starter.at) !== was) arriveCards(topEl.querySelector('.chat-starter')); }
+  if (isEmpty && !S.blocker) loadStarter();
   // thread: rebuilt only when it changed, and only messages not drawn before animate in
   const sig = `${c.key}|${msgs.map(m => m.id).join(',')}|${c.pending ? `p:${c.pending.text}` : ''}|${c.err ? `e:${c.err.msg}` : ''}|${offlineCopy ? 'off' : ''}|${msgs.length && c.loadedAt ? c.loadedAt : ''}`;
   const sc = scroller(), switched = panel.dataset.cur !== c.key;
   if (sig !== S.sig || force) {
     const seen = S.rendered.get(c.key) || new Set(), first = !seen.size;
-    let html = msgs.map(m => message(m, !first && !switched && !seen.has(m.id))).join('');
+    const parts = []; let prevAt = 0;
+    const lastAgent = c.pending || c.err || offlineCopy ? -1 : msgs.map(m => m.role).lastIndexOf('assistant');
+    msgs.forEach((m, i) => {
+      const at = m.createdAt || 0;
+      if (at && (!prevAt || at - prevAt > GAP)) parts.push(`<div class="cm-time" data-k="t-${esc(m.id || i)}">${esc(stamp(at))}</div>`);
+      if (at) prevAt = at;
+      const asked = msgs[i - 1]?.role === 'user' ? msgs[i - 1].text : '';
+      parts.push(message(m, !first && !switched && !seen.has(m.id), i === lastAgent ? chips(chipsFor(m, asked)) : ''));
+    });
     msgs.forEach(m => seen.add(m.id)); S.rendered.set(c.key, seen);
-    if (c.pending) html += message({ role: 'user', id: 'pending', text: c.pending.text }, !seen.has('pending:' + c.pending.at)) + waiting();
-    if (c.pending) seen.add('pending:' + c.pending.at);
-    if (c.err) html += `<div class="cm cm-error" data-k="m-err" role="alert" data-testid="chat-error"><p>${esc(c.err.msg)}</p>${c.err.retry ? '<button type="button" class="btn ghost sm" data-act="chat-retry" data-testid="chat-retry">Try again</button>' : ''}</div>`;
+    if (c.pending) {
+      if (!prevAt || c.pending.at - prevAt > GAP) parts.push(`<div class="cm-time" data-k="t-pending">${esc(stamp(c.pending.at))}</div>`);
+      parts.push(message({ role: 'user', id: 'pending', text: c.pending.text }, !seen.has('pending:' + c.pending.at)), waiting());
+      seen.add('pending:' + c.pending.at);
+    }
+    if (c.err) parts.push(`<div class="cm cm-error" data-k="m-err" role="alert" data-testid="chat-error"><p>${esc(c.err.msg)}</p>${c.err.retry ? '<button type="button" class="btn ghost sm" data-act="chat-retry" data-testid="chat-retry">Try again</button>' : ''}</div>`);
     const th = panel.querySelector('.chat-thread');
-    th.innerHTML = html;
+    const made = patchThread(th, parts, switched || force);
     S.sig = sig;
-    th.querySelectorAll('.cm-new').forEach(n => { motion.bars(n, true); motion.charts(n); });       // only what just arrived animates
+    made.forEach(n => {                                                    // only what just arrived animates, once
+      if (!n.classList.contains('cm-new')) return;
+      if (n.classList.contains('cm-agent')) arrive(n, +n.dataset.reveal || 0);
+      setTimeout(() => n.classList.remove('cm-new', 'cm-reveal'), 2500);
+    });
     panel.dataset.cur = c.key;
     // where to land: a chat you return to opens where you left it (newest by default); in the chat you're reading,
     // follow new content while you're at the bottom (or just sent), otherwise leave you be and offer "Latest"
@@ -254,7 +339,7 @@ function paint(force = false) {
   // dock state
   const ta = input();
   if (switched || force) { if (ta.value !== c.draft) { ta.value = c.draft || ''; grow(ta); } }
-  ta.disabled = off; ta.placeholder = off ? 'Chat is unavailable right now' : c.pending ? 'Ask a follow-up when this answer lands…' : 'Ask about your data…';
+  ta.disabled = off; ta.placeholder = off ? 'Chat is unavailable right now' : c.pending ? 'Your next question…' : 'Ask about your data…';
   panel.querySelector('.chat-composer').classList.toggle('off', off);
   panel.querySelector('.chat-mic').disabled = off;
   panel.querySelector('.chat-hist-btn').setAttribute('aria-expanded', String(wide ? S.hist : !!histSheet));
@@ -277,7 +362,7 @@ export function dictateInto(text, reason) {
 function dragToClose(root) {
   const head = root.querySelector('.chat-head');
   let y0 = null, dy = 0, t0 = 0;
-  head.addEventListener('pointerdown', e => { if (e.button > 0 || wideMq.matches) return; y0 = e.clientY; dy = 0; t0 = e.timeStamp; try { head.setPointerCapture(e.pointerId); } catch { /* synthetic */ } });
+  head.addEventListener('pointerdown', e => { if (e.button > 0 || wideMq.matches || e.target.closest('button, a')) return; y0 = e.clientY; dy = 0; t0 = e.timeStamp; try { head.setPointerCapture(e.pointerId); } catch { /* synthetic */ } });
   head.addEventListener('pointermove', e => { if (y0 === null) return; dy = Math.max(0, e.clientY - y0); root.style.transform = dy ? `translate3d(0, ${dy}px, 0)` : ''; });
   const end = e => {
     if (y0 === null) return;
@@ -328,6 +413,7 @@ async function send(raw) {
     if (!conv.id) conv.id = r.chatId;
     if (r.title) conv.title = r.title;
     appendUnique(conv.msgs, r.user, r.message);
+    if (r.user?.id) (S.rendered.get(conv.key) || S.rendered.set(conv.key, new Set()).get(conv.key)).add(r.user.id);   // its bubble is already on screen
     conv.loaded = true; conv.updatedAt = Date.now();
     if (S.cur === conv.key && S.open) rememberChat({ chat: { id: conv.id, title: titleOf(conv) }, messages: conv.msgs });
     else { conv.unread = true; toast(`Answer ready in “${titleOf(conv) || 'your other chat'}”.`); }

@@ -1,4 +1,4 @@
-# Chat agent (agent layer, phase 1)
+# Chat agent (agent layer: 1.5 read-only chat, 1.6 show-first answers, suggestions, search)
 
 A **Chat** screen where one agent answers questions about your own Steady data ("how much did I spend this week?",
 "how are my goals going?", "what did I write about pricing?") with a few words plus **cards**: charts, lists and tables
@@ -17,10 +17,165 @@ phase 2 (an `Actions` card), and voice replies are not planned.
    GET /api/agent/chats · GET /api/agent/chats/:id (cards re-resolved from today's data) · DELETE /api/agent/chats/:id
 ```
 
-Files: `server/chat.js` (router, loop, storage, cap, cache) · `server/chat-tools.js` (tools) · `server/chat-cards.js`
-(card kit, validator, resolver, the guide the model is taught) · `db/migrations/0009_agent_chat.sql` ·
+Files: `server/chat.js` (router, loop, profile context, reply finishing, storage, cap, cache, starter) ·
+`server/chat-prompt.js` (**the one system prompt**) · `server/chat-tools.js` (tools) · `server/chat-search.js` (hybrid
+retrieval, embeddings) · `server/chat-cards.js` (card kit, validator, resolver, deterministic card picking, suggestion
+cleaning) · `db/migrations/0009_agent_chat.sql`, `0010_chat_search.sql` · evals `tests/api/chat-evals.mjs` ·
 web `js/data/chat.js`, `js/ui/views/chat.js`, `js/ui/cards.js` · Android `agent/Chat.kt`, `ui/screens/Chat.kt`,
 `ui/screens/ChatCards.kt`, `ui/Ask.kt` (Ask button) · web `js/ui/press.js` (tap/hold rule) · mock `tests/mocks/ai-mock.mjs` (`chatCompletion`).
+
+## Client contract (1.6)
+
+What the web and Android clients can rely on from 1.6. Everything is additive: 1.5 fields keep their meaning, and a
+client that ignores the new fields still works.
+
+### Message object (assistant)
+
+Returned as `message` by `POST /api/agent/chat` and as each entry of `messages` by `GET /api/agent/chats/:id`:
+
+```jsonc
+{
+  "id": "123", "role": "assistant", "createdAt": 1761000000000, "meta": { /* debug, do not render */ },
+  "text": "6 done today, two more than yesterday. Mornings are carrying you this week.",
+  "cards": [ /* resolved cards, 0–4, same kit as 1.5 (Stat Line Bar Donut Heatmap ProgressList TaskList Timeline Table Note Callout) */ ],
+  "suggestions": ["Compare with last week", "Which goal is behind?"]   // 0–3 strings, each ≤ 40 chars, plain text
+}
+```
+
+- `suggestions` is always present (an array, possibly empty). User messages carry `"suggestions": []`.
+- Tapping a suggestion sends its text as the next `message` in the same chat (`POST /api/agent/chat { chatId, message }`).
+  Show chips only under the **latest** assistant message.
+- Every answer about the user's data carries at least one data card: the model is told to, and if it does not, the server
+  attaches one built from the tools it called (`meta.autoCards`). Small talk may have no card.
+
+### Resolved card additions (1.6, all optional)
+
+- **Line / Bar** grouped by day: `data.points` has **one point for every day in the period, zero days included**
+  (`value: 0`, `display: "0"`), in date order. Each point has `label` ("15 Oct") and, for day groupings, `short`
+  ("Wed") for compact axes. Draw a zero bar as a visible baseline stub and label every point (or every n-th when crowded).
+  `data.max` = the largest value (0 when empty).
+- **Stat**: `data.trend` = `{ points: [{ key, label, short, value, display }], unit }`, the same figure per day for the
+  7 days ending on the period's last day or today, whichever is earlier (zero-filled), for a small sparkline. Present when the server could compute it
+  (tasks / money / thoughts counts and sums); absent otherwise. `data.compare` is unchanged from 1.5
+  (`{ value, display, delta, deltaDisplay, label }`); a positive `delta` means more than the comparison period. From 1.6 a
+  Stat over a dated period always carries a comparison with the period just before it, the same number of days
+  (labels such as `yesterday`, `same point last week`, `last month to date`, `last week`, `previous 30 days`).
+
+### Starter (empty-chat state)
+
+`GET /api/agent/chat/starter?tz=Asia/Kolkata` (auth cookie; no CSRF header needed for GET). No model call, cheap,
+computed from the user's data each time:
+
+```jsonc
+{
+  "text": "2 of 5 tasks done today.",          // optional one-line headline, plain text (may be "")
+  "cards": [ /* 1–2 resolved cards, e.g. a Stat "done today" with compare + trend, or spend this week vs last */ ],
+  "suggestions": ["What's left for today?", "Spending this week", "How are my goals?", "What did I write lately?"]  // 3–4, ≤ 40 chars
+}
+```
+
+Show it when a chat has no messages; tapping a chip starts a new chat with that text. Failure (offline, 5xx) → just
+show the plain empty state. `GET /api/agent/chats` is unchanged.
+
+## Architecture (1.6) and why
+
+**Decision: one tool-using agent with a single system prompt, wrapped in deterministic layers.** No LLM intent router,
+no planner model, no second "UI" model call.
+
+```
+ question ─▶ [profile context: 1 SQL aggregate, bounded]   ─▶ system prompt (chat-prompt.js) + tool schemas + last 12 messages
+          ─▶ agent loop (≤ 5 rounds): plan → parallel read-only tool calls → observe ─▶ reply {text, cards, suggestions}
+          ─▶ deterministic UI layer: validate/repair cards · attach a card if a data answer has none · Stat compare
+             (previous period) + 7-day trend · zero-filled series · clean/fill suggestions
+          ─▶ store QUERY specs ─▶ resolve figures from rows
+ retrieval: `search` tool = Postgres full-text + pg_trgm + optional pgvector, fused by RRF (just-in-time, never stuffed)
+ starter:   no model; deterministic headline card + chips from the same profile/tools
+ evals:     tests/api/chat-evals.mjs (16 cases, mock or preview)
+```
+
+Why this shape, for Steady's constraints (free-tier models with per-minute token limits, Vercel functions with a time
+budget, Neon free plan CU-hours):
+
+| Choice | Reason | Source |
+| --- | --- | --- |
+| One agent loop, not router + specialists | "Find the simplest solution possible, and only increase complexity when needed"; an agent is "LLMs using tools based on environmental feedback in a loop". A router is another model call per turn (latency, free-tier tokens) for six tools that one model already chooses between well. | [Anthropic, Building effective agents](https://www.anthropic.com/engineering/building-effective-agents) |
+| Deterministic UI-selection layer in code | Models skip cards or pick a weak one (the 1.5 complaint). Rules over *what was queried* are reliable, free and testable; workflows "offer predictability and consistency for well-defined tasks". Generative UI = tool results mapped to components. | Building effective agents; [Vercel AI SDK, Generative UI](https://ai-sdk.dev/docs/ai-sdk-ui/generative-user-interfaces) |
+| Retrieval as a tool (just in time), small profile up front | Context is a finite "attention budget"; agents should keep light references and load data on demand, with a hybrid of a little pre-loaded context plus tools. Stuffing rows into the prompt degrades recall ("context rot") and grows with data. | [Anthropic, Effective context engineering](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents) |
+| One consolidated `search` (all collections, filters) | Prefer a few targeted, consolidated tools (`search_logs` over `read_logs`), return high-signal fields, cap response size, make errors actionable. | [Anthropic, Writing effective tools for agents](https://www.anthropic.com/engineering/writing-tools-for-agents) |
+| Hybrid lexical + fuzzy + semantic, RRF | Lexical is exact and cheap in Postgres; trigram catches typos; embeddings catch meaning; RRF merges ranked lists without score calibration. Embeddings optional so a 429 never breaks search. | standard IR practice; Neon supports `pg_trgm` and `vector` |
+| Parallel tool calls in one round, ≤ 5 rounds | "Parallelize discovery and stop as soon as you can act"; explicit early-stop and a tool budget. | [OpenAI GPT-5 prompting guide](https://cookbook.openai.com/examples/gpt-5/gpt-5_prompting_guide) |
+| Evals first-class | Agent behaviour must be measured on realistic tasks and iterated. | Writing effective tools for agents |
+
+What was **not** done and why: an LLM router (extra call, more 429s on free tiers); a planner/executor split (two calls
+per turn on a 25 s budget); streaming (Vercel function + clients are request/response today; possible later).
+
+## System prompt (`server/chat-prompt.js`)
+
+There is exactly **one** prompt: `systemPrompt(now, profile)`, a single template with two bounded slots. Tool parameters
+are not repeated in it: they live in the tool JSON schemas sent in the API `tools` field (OpenAI: pass tools in the
+tools field rather than injecting them into the prompt). The reply shape is the `reply` tool schema in `server/chat.js`.
+
+**Assembly and injection, per model call:**
+1. `system` message = `systemPrompt(now, profile)`; `now` = weekday, date, time, IANA zone of the client; `profile` =
+   `profileContext()` (one aggregate SQL statement: counts per collection, today's done/open/overdue, ≤ 6 goal titles,
+   ≤ 5 tags, ≤ 5 spend categories this month, budget set?). Strings are clipped and lists capped (`formatProfile`), so the
+   prompt is ~1.8k tokens whether he has 50 records or 50,000 (unit-tested).
+2. `tools` = the 7 read tools + `reply` (`toolSchemas()` + `REPLY_TOOL`), `tool_choice: auto` (forced `reply` on round 6).
+3. messages = last 12 chat messages (earlier cards described by their query, never numbers) + the new question.
+4. Tool results go back as `tool` messages, compacted to valid JSON within a per-round budget (7 kB shared by the calls
+   of one round, 1.5–4 kB each; record ids dropped; long lists halved with a `truncated` note). Free-tier Groq rejects a
+   request bigger than its per-minute token limit (8k TPM on gpt-oss), so an unbounded round of parallel calls would
+   fail deterministically. Tool schemas were trimmed for the same reason (`search_thoughts` stays callable, not offered).
+5. A turn no provider could answer returns 502 with `reasons` (`groq-20b:rate_limited`, `gonka:timeout`, …): coarse
+   codes only, never provider text.
+
+| Section | What it does | Principle and source |
+| --- | --- | --- |
+| `<identity>` | who/what, data model, read-only | role and objective first ([GPT-4.1 guide](https://cookbook.openai.com/examples/gpt4-1_prompting_guide) prompt structure; Claude's published prompts open with identity + date, [Anthropic system prompts](https://platform.claude.com/docs/en/release-notes/system-prompts)) |
+| `<context>` | now + bounded profile | just-in-time context, small high-signal pre-load (context engineering) |
+| `<how_to_work>` | plan → act → observe → reply; parallel; early stop; ambiguity → answer + suggestion | persistence + planning reminders (GPT-4.1 "agentic workflows"); context-gathering budget and early stop (GPT-5 guide) |
+| `<tools>` | when to use each tool (not how) | tool guidance in the prompt, specs in schemas (GPT-4.1); clear boundaries between tools (writing tools for agents) |
+| `<cards>` | the visual kit and which card for which answer shape | generative UI: map results to components (Vercel AI SDK) |
+| `<truth>` | figures only from tools | "do NOT guess or make up an answer" tool-calling reminder (GPT-4.1) |
+| `<reply>` | format, tone, language mix, suggestions | explicit output format section; avoid conflicting instructions (GPT-4.1, GPT-5) |
+| `<proactive>` | at most one notable observation | calibrated eagerness (GPT-5 "agentic eagerness") |
+| `<failures>` | writes, off-topic, tool errors, advice | escape hatches so "always" rules do not force bad tool calls (GPT-4.1 common failure modes) |
+| `<examples>` | three canonical, diverse examples (count, code-mixed spend, search) | "diverse, canonical examples" instead of a laundry list of rules (context engineering); vary phrasing so examples are not parroted (GPT-4.1) |
+| `<final>` | one-line restatement | instructions at the end are weighted most (GPT-4.1 long-context placement) |
+
+Sections are XML-tagged like Claude's published prompts and Cursor's (GPT-5 guide: structured `<…_spec>` blocks improve
+adherence). No all-caps or bribes (GPT-4.1). `PROMPT_VERSION` in the module; change the prompt only there.
+
+## Search (RAG, `server/chat-search.js`, `0010_chat_search.sql`)
+
+- **Text**: `record_search_text(coll, data)` (IMMUTABLE SQL function): tasks title + notes, thoughts text + tags, money
+  note + payee + category. Two partial expression indexes on `records` (only tasks/thoughts/money, not deleted): GIN
+  `to_tsvector('simple', …)` and GIN `gin_trgm_ops`. Both live on `records`, so its FORCE RLS still scopes every query.
+- **Lexical**: OR of prefix terms (`pric:* | visa:*`, stop words dropped, letters/digits only), ranked by `ts_rank`.
+  **Fuzzy**: `word_similarity` ≥ 0.35 via `<%` (index-backed). **Semantic** (optional): Gemini `gemini-embedding-001`
+  (768 dims, `AGENT_EMBED_MODEL`) in `record_embeddings` (owner-scoped, FORCE RLS, FK cascade to `records`, HNSW cosine
+  index), cosine distance < `AGENT_VECTOR_MAX_DIST` (0.5). Top 30 of each → **RRF** (k = 60) → filters (period) → items.
+- **Degrades**: no `vector` extension (or a role that may not create it), no `GEMINI_API_KEY`, `AGENT_EMBED=off`, a 429
+  (parks 5 min) or a query-embedding slower than 1.5 s → that list is simply left out. Without SQL (unit tests) the same
+  tool ranks in memory.
+- **Back-fill**: lazily, ≤ 16 records per chat turn (newest first, re-embedded when their text hash changes), started in
+  parallel with the model call and awaited ≤ 1.5 s after the reply; never blocks or fails a turn. Cost: one small read
+  per turn, one embedding batch only when something is new.
+- **Tools**: `search` (query, `collections` thoughts|tasks|money, period, limit) and `search_thoughts` (1.5 alias,
+  thoughts only, same ranking, 1.5 item shape). Timeline cards can show both.
+
+## Deterministic layers (`finishReply`, `pickCards`, `cleanSuggestions`, `starter`)
+
+- **Card guarantee**: if the validated reply has no data card but tools ran, `pickCards()` maps the last calls to cards:
+  tasks done → Stat; open tasks → TaskList; grouped by day/weekday/hour → Bar; by goal/status/category/payee/tag → Donut;
+  money total → Stat; goals → ProgressList; search/thoughts → Timeline; insights → Stat (done this week). At most 2, one
+  per tool, nothing for empty searches. Marked `meta.autoCards`.
+- **Repairs**: a day-chart over one day becomes the 7 days ending that day; Stat gets a previous-period compare; labels
+  or titles containing figures are dropped (the model may not smuggle numbers); weeks are zero-filled like days.
+- **Suggestions**: model ones cleaned (≤ 3, ≤ 40 chars, plain, no figures/links/duplicates/the question itself); none
+  given → fixed ones for the tools used. Small talk → none.
+- **Starter**: `GET agent/chat/starter` (see the contract): today's tasks Stat (+ compare + trend), this week's spend
+  Stat, else goals; 3–4 chips that match what he tracks. One aggregate SQL + at most a few cached reads; no model.
 
 ## The two safety rules
 
@@ -41,8 +196,9 @@ come from a tool call). That is a prompt-level rule, not a hard guarantee; the c
 ## Tools (read-only, `server/chat-tools.js`)
 
 Each tool call runs one statement at a time through `withOwner(ownerId)` (FORCE RLS, `app.owner_id`), so it can only
-ever see this user's `records`. No tool writes. Each collection is read once per request (≤ 5000 rows) and aggregated in
-JS; `search_thoughts` uses SQL (`ILIKE` + `to_tsvector('simple') @@ plainto_tsquery`). Dates are the user's calendar
+ever see this user's `records`. No tool writes. Each collection is read once per request (≤ 5000 rows; the same cache
+serves the profile, every tool call of every provider attempt, and card resolution) and aggregated in JS; `search` runs
+hybrid SQL retrieval (see Search). Calls of one round run in parallel. Dates are the user's calendar
 days in their zone (`tz` from the client, default Asia/Kolkata); weeks start Monday.
 
 | Tool | Params (all optional unless noted) | Result fields cards can bind |
@@ -51,7 +207,8 @@ days in their zone (`tz` from the client, default Asia/Kolkata); weeks start Mon
 | `query_goals` | `goal` | scalars `count milestones_done milestones_total progress`; items `title target done total progress` |
 | `query_money` | `kind` expense/income/any (default expense) · period (default this month) · `category` · `payee` · `group_by` day/week/month/category/payee · `limit` | scalars `total count avg_per_day` (₹); items `date kind amount category payee note`; groups `sum count` |
 | `query_thoughts` | period (default last 30 days) · `tag` · `kind` · `group_by` day/tag/mood/kind · `limit` | scalar `count`; items `date text tags mood kind`; groups `count` |
-| `search_thoughts` | `query` (required) · `limit` | scalar `count`; items as above |
+| `search` | `query` (required) · `collections` · period · `limit` | scalar `count`; items `coll date text amount status tags` (+ `kind category payee due`) |
+| `search_thoughts` | `query` (required) · `limit` (1.5 alias: `search` over thoughts) | scalar `count`; items as `query_thoughts` |
 | `get_insights_summary` | – | `streak_current streak_longest done_this_week done_last_week rate_last_7 rate_last_30 avg_done_per_day spent_this_week spent_last_week spent_month milestones_done milestones_total thoughts_month` (+ best window/day, slump, learned patterns as text) |
 
 A **period** is `range` (`today yesterday tomorrow this_week last_week next_7_days last_7_days last_30_days last_90_days
@@ -73,7 +230,7 @@ Resolved card = spec + `data`:
 | `Heatmap` | tasks/money/thoughts; grouped by day (default last 90 days) | `days[{ date value display }] max from to unit period empty` |
 | `ProgressList` | `query_goals` | `items[{ id label done total frac display }] empty` |
 | `TaskList` | `query_tasks` (≤ 20) | `items[{ id title status due time goal dueDisplay }] count period empty` |
-| `Timeline` | tasks/money/thoughts/search_thoughts (≤ 20) | `items[{ date time title sub dateDisplay }] period empty` |
+| `Timeline` | tasks/money/thoughts/search/search_thoughts (≤ 20) | `items[{ date time title sub dateDisplay }] period empty` |
 | `Table` | any tool; `bind.rows` items/groups; `bind.columns` ≤ 4 allowed fields | `columns[{ key label }] rows[[string]] period empty` |
 | `Note` | `text` (≤ 600, no figures) | `text` |
 | `Callout` | `text` (≤ 300, no figures), `tone` info/good/warn | `text tone` |
@@ -81,8 +238,8 @@ Resolved card = spec + `data`:
 Validation is strict but repairing: unknown components/tools → dropped; wrong casing → fixed; a chart without a usable
 `group_by` → sensible default; bad `bind` → default field; unknown keys → removed; >4 cards → the rest dropped. Dropped
 cards are listed in the message's `meta.dropped` (stored, not shown). A card whose data cannot be read resolves to
-`{ empty: true }` so one bad card never hides the answer. The guide the model is taught (`CARD_GUIDE`) lives beside the
-validator so the two cannot drift.
+`{ empty: true }` so one bad card never hides the answer. What the model is taught about cards is the `<cards>` section of the
+system prompt (`server/chat-prompt.js`); keep it in step with `COMPONENTS` here.
 
 ## Model router
 
@@ -101,8 +258,8 @@ provider-specific message fields). The loop allows **5 rounds of tool calls**; t
 configured, `/api/config` reports `chat: { on: false }` and the endpoint answers 503 with a calm message; with every
 provider failing it answers 502 "I could not reach a model right now" and the turn is refunded from the cap.
 
-The model sees: a system prompt (now in the user's zone, the rules, `CARD_GUIDE`), the last 12 messages of the chat
-(earlier cards described by their query, never their numbers), and the new message.
+The model sees: the one system prompt (see System prompt), the tool schemas, the last 12 messages of the chat (earlier
+cards described by their query, never their numbers), and the new message.
 
 ## Cap, cache, storage
 
@@ -169,14 +326,15 @@ The model sees: a system prompt (now in the user's zone, the rules, `CARD_GUIDE`
 1. Add an entry to `TOOLS` in `server/chat-tools.js`: `description`, JSON-schema `parameters`, `clean(params)` (validate
    and clamp; never trust the model), `run(load, params, ctx)` (read through `load(coll)` or `ctx.sql`, which are RLS-scoped;
    **never write**), and `fields` (`scalars` with a format, `items`, `ys`, `groupBys`) so cards can bind to it.
-2. If cards should plot it, allow it in `CHART_TOOLS` / `TIMELINE_TOOLS` in `server/chat-cards.js` and mention it in `CARD_GUIDE`.
+2. If cards should plot it, allow it in `CHART_TOOLS` / `TIMELINE_TOOLS` in `server/chat-cards.js`, add a `cardFor()` rule
+   (the deterministic layer) and a line in `<tools>` / `<cards>` of `server/chat-prompt.js`.
 3. Teach the mock a keyword for it (`tests/mocks/ai-mock.mjs`) and add tests in `tests/unit/chat.test.mjs` (pure) and
    `tests/api/chat.test.mjs` (RLS: user B must not see it).
 
 ## How to add a card kind
 
 1. Server: add it to `COMPONENTS`, a `validateCard()` branch (what it needs, how to repair), a `resolveOne()` branch
-   (the `data` shape), and a line in `CARD_GUIDE`.
+   (the `data` shape), and a line in `<cards>` of `server/chat-prompt.js`.
 2. Web: a renderer in `js/ui/cards.js` (+ CSS under "chat cards" in `css/app.css`), and add it to `KINDS`.
 3. Android: add it to `ChatKinds.ALL`, typed accessors on `ChatCard` if needed, and a branch in `ChatCardView`.
 4. Tests: `tests/unit/chat.test.mjs` (shape), `tests/unit/cards-web.test.mjs`, `ChatCardsTest` / `ChatCardsRenderTest`
@@ -196,6 +354,9 @@ The model sees: a system prompt (now in the user's zone, the rules, `CARD_GUIDE`
 | `AGENT_DAILY_CAP` | 60 | Chat turns per user per day. |
 | `AGENT_CHAT_CACHE_MS` | 600000 | First-question cache window. |
 | `AGENT_CHAT_TIMEOUT_MS` | 25000 | Per model call. |
+| `AGENT_EMBED` | on | `off` disables embeddings (search stays full-text + trigram). |
+| `AGENT_EMBED_MODEL` | `gemini-embedding-001` | Embedding model (768 dims via `outputDimensionality`), uses `GEMINI_API_KEY`. |
+| `AGENT_VECTOR_MAX_DIST` | 0.5 | Max cosine distance for a semantic match. |
 
 ## Tests
 
@@ -218,3 +379,33 @@ Android: `ChatCardsTest`, `ChatCardsRenderTest`, `ChatScreenTest` (live, against
 thumb-zone bounds, history sheet, Close/Back, `AskPress` rule; taps inside a `ModalBottomSheet` use
 `performSemanticsAction(OnClick)` under Robolectric); `ScreenshotTestChat`
 (pixels, x86_64 only) and `ScreenshotTestChatLayout` (semantics layout dump) run with `STEADY_SHOTS=dir`.
+
+1.6: `tests/unit/chat-agent16.test.mjs` (zero-filled day/week series with labels, one-day charts widened, Stat compare +
+trend, `previousPeriod`, `pickCards` rules, `finishReply` guarantee, suggestion cleaning, RRF / safe tsquery / in-memory
+search, the prompt's sections and bounded slots, compact tool results). `tests/api/chat16.test.mjs` (real Postgres +
+mock: auto card on a text-only answer, suggestions stored/returned/cached, hybrid search across collections under RLS,
+typo via trigram, starter without a model call, embeddings back-fill + vector fusion where pgvector exists; run it
+against a database with `vector` pre-installed to cover that path, e.g. created by a superuser in a schema on the
+role's `search_path`).
+
+### Evals (`tests/api/chat-evals.mjs`)
+
+16 realistic questions (counts, graphs, spend, shares, open tasks, goals, search, Telugu/Hinglish code-mix, weekday
+pattern, comparison, find-a-task, trend, overall, a write request, small talk) with expected card kinds and behaviour,
+scored on 8 checks (ok, kind, data card, zero-filled series, suggestions, brevity, grounded figures, case behaviour).
+It signs up a throwaway account, seeds ~30 records relative to today, asks each question in a new chat and deletes the
+account. `node tests/api/chat-evals.mjs http://localhost:8790` (mock) or `node tests/api/chat-evals.mjs
+https://<preview> --bypass=<token>` (real models). The mock is keyword-driven, so its score measures the server's
+guarantees, not model quality; the preview score measures the whole system.
+
+Scores (2026-10-21):
+
+| Run | Cases | Score | Notes |
+| --- | --- | --- | --- |
+| local stack, mock model | 16/16 | 91.4% | ok 16/16, series 16/16, brief 16/16, grounded 15/16, kind 12/16, data 14/16, suggest 14/16, behave 14/16. Misses are the keyword mock (no tool for "weekday"/Telugu, no write refusal); the server guarantees (zero-filled series, cleaned suggestions, auto cards) held in every case. |
+| preview, real models (Groq gpt-oss-120b / 20b) | 8 of 16 answered | 100% on every answered case | 1 tasks today → Stat (compare + trend); 2 graph → Bar; 3 spend this week → Stat (+Donut); 4 money this month → Stat + Donut; 5 open today → TaskList; 6 goals → ProgressList + Stat; 7 pricing → Timeline; 9 Hinglish → Stat. Case 8 (Telugu) and 10–16 not scored: every provider was rate-limited (`reasons` all `rate_limited`). Evals were stopped there so they would not use up the production keys' daily quota. |
+
+Capacity note: with only the two Groq models really answering (Gemini key 429, Gonka 429/timeouts, groq-qwen 429), the
+system serves roughly one to two turns a minute. Adding `CEREBRAS_API_KEY` and/or `OPENROUTER_API_KEY` (already
+supported by the router) is the cheapest way to raise it.
+

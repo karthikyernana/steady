@@ -190,28 +190,38 @@ export const revokeReadToken = id => api('POST', 'tokens/revoke', { id });
 // ---- live sync ----
 // A long-poll loop: the server answers as soon as another device writes (or after ~20 s), then we pull.
 // Runs only while the app is visible and online, so a closed app costs nothing.
-const live = { on: false, ctl: null, backoff: 0 };
+const live = { on: false, ctl: null, backoff: 0, gen: 0 };
 export function startLive() {
   if (live.on || !cloudReady() || document.hidden || !navigator.onLine) return;
   live.on = true; live.backoff = 0;
-  loop();
+  loop(++live.gen);
 }
 export function stopLive() { live.on = false; live.ctl?.abort(); live.ctl = null; }
-async function loop() {
-  while (live.on && cloudReady()) {
-    live.ctl = new AbortController();
+// One loop at a time: a quick hide/show (stopLive then startLive while the old loop is still awaiting a sync) starts a
+// new generation and the old loop exits instead of running a second long-poll next to it.
+const current = gen => live.on && live.gen === gen && cloudReady();
+async function backoff(gen) {
+  live.backoff = Math.min(30_000, (live.backoff || 2000) * 2);
+  await new Promise(r => setTimeout(r, live.backoff));
+  return current(gen);
+}
+async function loop(gen) {
+  while (current(gen)) {
+    const ctl = live.ctl = new AbortController();
     try {
-      const res = await fetch(`${API}sync/wait?since=${local('syncCursor', 0)}`, { credentials: 'same-origin', cache: 'no-store', headers: { 'X-Steady': '1' }, signal: live.ctl.signal });
-      if (res.status === 401) { const j = await res.json().catch(() => null); await expired(!!j?.revoked); return; }
+      const res = await fetch(`${API}sync/wait?since=${local('syncCursor', 0)}`, { credentials: 'same-origin', cache: 'no-store', headers: { 'X-Steady': '1' }, signal: ctl.signal });
+      if (res.status === 401) { const j = await res.json().catch(() => null); if (current(gen)) await expired(!!j?.revoked); return; }
       if (!res.ok) throw new Error(res.status);
       const r = await res.json();
-      live.backoff = 0;
+      if (!current(gen)) return;
       if (status.state !== 'syncing' && status.state !== 'live') setStatus({ state: 'live', error: null });
-      if (r.changed) await syncNow('live');
+      // a pull that fails leaves the cursor behind, so the next wait answers "changed" at once: back off instead of
+      // hammering the server (e.g. data from a newer schema, or the database down)
+      if (r.changed && !(await syncNow('live'))) { if (!(await backoff(gen))) return; continue; }
+      live.backoff = 0;
     } catch (e) {
-      if (!live.on) return;
-      live.backoff = Math.min(30_000, (live.backoff || 2000) * 2);
-      await new Promise(r => setTimeout(r, live.backoff));
+      if (!current(gen)) return;
+      if (!(await backoff(gen))) return;
     }
   }
 }

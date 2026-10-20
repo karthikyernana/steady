@@ -10,6 +10,7 @@
 // The LLM never sees or returns real ids: it gets short refs, and validatePlan maps them back. A ref the model
 // invents simply fails to resolve, so a hallucinated "complete task X" can never touch the wrong record.
 import { parseQuick } from './parse.js';
+import { dateKey } from './util.js';
 import { findAmount, parseMoney, canonicalCategory, guessCategory, guessPayee, DEFAULT_CATEGORIES } from './money.js';
 
 export const ACTION_TYPES = ['task', 'reminder', 'complete', 'progress', 'goal', 'money', 'thought'];
@@ -47,7 +48,7 @@ export function buildContext(data, { today, tz = 'Asia/Kolkata' } = {}) {
     profile: { name: data.profile?.name || '', wake: data.profile?.wake || '07:00', sleep: data.profile?.sleep || '23:30' },
     defaultReminder: data.settings?.defaultReminder !== false,
     tasks: open.map(x => ({ id: x.id, title: clip(x.title, 90), due: x.dueDate || null, time: x.dueTime || null, goalId: x.goalId || null })),
-    done: done.map(x => ({ id: x.id, title: clip(x.title, 90), doneOn: x.doneAt ? new Date(x.doneAt).toISOString().slice(0, 10) : null })),
+    done: done.map(x => ({ id: x.id, title: clip(x.title, 90), doneOn: x.doneAt ? dateKey(new Date(x.doneAt)) : null })),
     goals: goals.map(g => ({ id: g.id, title: clip(g.title, 90), target: g.target || null,
       milestones: (g.milestones || []).filter(m => !m.done).slice(0, 6).map(m => ({ id: m.id, title: clip(m.title, 80), week: m.week || null })),
       actions: (g.actions || []).slice(0, 6).map(a => ({ id: a.id, title: clip(a.title, 60) })) })),

@@ -86,6 +86,7 @@ else {
     assert.equal((await call('POST', 'auth/google', { credential: idToken({ email: OWNER, aud: 'evil' }) }, { jar: false })).status, 401);
     const other = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey;
     assert.equal((await call('POST', 'auth/google', { credential: idToken({ email: OWNER }, 'k1', other) }, { jar: false })).status, 401);
+    assert.equal((await call('POST', 'auth/google', { credential: 'not.a.jwt' }, { jar: false })).status, 401, 'garbage token: 401, not 500');
     assert.equal((await call('POST', 'auth/google', { credential: idToken({ email: OWNER, exp: 1000 }) }, { jar: false })).status, 401);
     assert.equal((await call('POST', 'auth/google', { credential: idToken({ email: OWNER }) }, { csrf: false, jar: false })).status, 403, 'needs CSRF header');
   });
@@ -147,6 +148,21 @@ else {
     const { rows } = await query('select password_hash from owners where email = $1', [email]);
     assert.ok(rows[0].password_hash && !rows[0].password_hash.includes('long enough'), 'password stored hashed');
   });
+  test('a Google-only account cannot be claimed by signing up with its email', async () => {
+    const { query } = await import('../../server/db.js'); await query('delete from login_attempts');
+    const email = 'google.only@example.com';
+    const { rows } = await query('insert into owners (email) values ($1) returning id', [email]);     // what Google sign-in creates
+    await query(`insert into sessions (token_hash, owner_id, device, expires_at) values ($1, $2, 'Android', now() + interval '1 day')`, ['g'.repeat(64), rows[0].id]);
+    const chk = (await call('POST', 'auth/check', { email }, { jar: false })).body;
+    assert.equal(chk.exists, false); assert.equal(chk.canCreate, false); assert.equal(chk.google, true);
+    const r = await call('POST', 'auth/signup', { email, password: 'attacker pass 1' }, { jar: false });
+    assert.equal(r.status, 409); assert.ok(!r.setCookie, 'no session handed out');
+    assert.equal((await query('select password_hash from owners where id = $1', [rows[0].id])).rows[0].password_hash, null, 'password not set');
+    // a never-used, pre-provisioned row can still get its first password
+    await query("insert into owners (email) values ('preprov@example.com')");
+    assert.equal((await call('POST', 'auth/signup', { email: 'preprov@example.com', password: 'first pass 123' }, { jar: false })).status, 200);
+    await query("delete from owners where email in ($1, 'preprov@example.com')", [email]);
+  });
   test('admin migrate route is secret-protected and idempotent', async () => {
     assert.equal((await call('POST', 'admin/migrate', {}, { auth: 'Bearer nope', jar: false })).status, 401);
     const r = await call('POST', 'admin/migrate', {}, { auth: 'Bearer migrate-secret-0123456789', jar: false });
@@ -160,6 +176,13 @@ else {
     assert.equal((await call('POST', 'auth/login', { email: 'nobody@example.com', password: 'long enough 123' }, { jar: false })).status, 401, 'unknown email: same answer');
     for (let i = 0; i < 4; i++) assert.equal((await call('POST', 'auth/login', { email, password: 'wrong wrong wrong' }, { jar: false })).status, 401);
     assert.equal((await call('POST', 'auth/login', { email, password: 'long enough 123' }, { jar: false })).status, 429);
+    await query('delete from login_attempts');
+    // many IPs failing against other accounts never lock this one out (no instance-wide cap) ...
+    for (let i = 0; i < 25; i++) await query("insert into login_attempts (ip, ok, email) values ($1, false, 'victim.other@example.com')", [`10.0.0.${i}`]);
+    assert.equal((await call('POST', 'auth/login', { email, password: 'long enough 123' }, { jar: false })).status, 200, 'others\' failures do not lock this account');
+    // ... while 10 failures against one account from anywhere pause that account
+    for (let i = 0; i < 10; i++) await query('insert into login_attempts (ip, ok, email) values ($1, false, $2)', [`10.1.0.${i}`, email]);
+    assert.equal((await call('POST', 'auth/login', { email: 'New.User@example.com', password: 'long enough 123' }, { jar: false })).status, 429);
     await query('delete from login_attempts');
   });
   test('Web Push: subscribe, schedule, cron sends once, prunes dead endpoints', async () => {
@@ -184,6 +207,19 @@ else {
     const sn = await call('POST', 'reminders/snooze', { key: 'st-a', minutes: 10 });
     assert.equal(sn.status, 200); assert.ok(Math.abs(sn.body.fireAt - (Date.now() + 600e3)) < 5000);
     assert.equal((await call('POST', 'reminders/snooze', { key: 'st-nope' })).status, 404);
+    // the task is done (its reminder deleted): the pending snooze goes too; a moved reminder drops its old snooze
+    await call('POST', 'reminders', { upsert: [{ key: 'st-z', fireAt: Date.now() + 2 * 3600e3, title: 'Zed' }] });
+    assert.equal((await call('POST', 'reminders/snooze', { key: 'st-z', minutes: 10 })).status, 200);
+    await call('POST', 'reminders', { delete: ['st-z'] });
+    assert.ok(!(await call('GET', 'reminders')).body.reminders.some(r => r.key.startsWith('st-z')), 'snooze removed with its reminder');
+    await call('POST', 'reminders', { upsert: [{ key: 'st-y', fireAt: now + 2 * 3600e3, title: 'Why' }] });
+    await call('POST', 'reminders/snooze', { key: 'st-y', minutes: 10 });
+    await call('POST', 'reminders', { upsert: [{ key: 'st-y', fireAt: now + 2 * 3600e3, title: 'Why' }] });
+    assert.ok((await call('GET', 'reminders')).body.reminders.some(r => r.key === 'st-y~snooze'), 'same-time re-mirror keeps the snooze');
+    const yAt = Date.now() + 3 * 3600e3;
+    await call('POST', 'reminders', { upsert: [{ key: 'st-y', fireAt: yAt, title: 'Why' }] });
+    assert.deepEqual((await call('GET', 'reminders')).body.reminders.filter(r => r.key.startsWith('st-y')).map(r => r.key), ['st-y'], 'moved reminder drops its snooze');
+    await call('POST', 'reminders', { delete: ['st-y'] });
     // health endpoint
     const st = (await call('GET', 'reminders/status')).body;
     assert.equal(st.devices.length, 1); assert.ok(st.devices[0].lastOk, 'delivery recorded'); assert.ok(st.pending >= 3); assert.ok(st.lastSent);

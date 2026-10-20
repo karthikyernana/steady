@@ -83,7 +83,7 @@ test('shiftToZone makes process-local getters read the user\'s wall clock', () =
 
 test('tool schemas are OpenAI-style function declarations, read tools only', () => {
   const names = toolSchemas().map(t => t.function.name);
-  assert.deepEqual(names, ['query_tasks', 'query_goals', 'query_money', 'query_thoughts', 'search_thoughts', 'get_insights_summary']);
+  assert.deepEqual(names, ['query_tasks', 'query_goals', 'query_money', 'query_thoughts', 'search', 'get_insights_summary']);
   assert.ok(!names.some(n => /add|create|update|delete|write|complete/.test(n)));
 });
 

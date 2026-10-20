@@ -157,8 +157,8 @@ function editBudget() {
   openSheet({
     title: 'Monthly budget',
     body: `<p class="muted">Optional. Only used to show what’s left.</p>
-      <form class="form" id="bf"><label class="field"><span>All spending, per month (₹)</span><input name="total" type="number" inputmode="numeric" min="0" step="100" value="${+bd.total || ''}" placeholder="No limit"></label>
-      <div class="field"><span>By category (₹ per month)</span><div class="budget-grid">${cats.map(c => `<label class="b-cat"><span>${esc(c)}</span><input type="number" inputmode="numeric" min="0" step="50" data-cat="${esc(c)}" value="${+bd.categories[c] || ''}" placeholder="—" aria-label="${esc(c)} budget"></label>`).join('')}</div></div>
+      <form class="form" id="bf"><label class="field"><span>All spending, per month (₹)</span><input name="total" type="number" inputmode="numeric" min="0" step="any" value="${+bd.total || ''}" placeholder="No limit"></label>
+      <div class="field"><span>By category (₹ per month)</span><div class="budget-grid">${cats.map(c => `<label class="b-cat"><span>${esc(c)}</span><input type="number" inputmode="numeric" min="0" step="any" data-cat="${esc(c)}" value="${+bd.categories[c] || ''}" placeholder="—" aria-label="${esc(c)} budget"></label>`).join('')}</div></div>
       <div class="row end gap form-actions"><button class="btn primary" type="submit">Save budget</button></div></form>`,
     onMount: (b, api) => b.querySelector('#bf').addEventListener('submit', async ev => {
       ev.preventDefault();
