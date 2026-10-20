@@ -13,7 +13,11 @@ def check(c, m):
     ok += 1; print('ok ', m)
 js = lambda path, body=None, method='POST': f"""async () => {{ const r = await fetch('/api/{path}', {{ method: '{method}', credentials: 'same-origin', headers: {{ 'content-type': 'application/json', 'x-steady': '1' }}, body: {json.dumps(json.dumps(body)) if body is not None else 'undefined'} }}); return {{ s: r.status, b: await r.json().catch(() => null) }}; }}"""
 with sync_playwright() as p:
-    br = p.chromium.launch()
+    import urllib.parse
+    px = os.environ.get('HTTPS_PROXY') or os.environ.get('https_proxy')
+    if BASE.startswith('https') and px:
+        u = urllib.parse.urlparse(px); br = p.chromium.launch(proxy={'server': f'http://{u.hostname}:{u.port}', 'username': urllib.parse.unquote(u.username or ''), 'password': urllib.parse.unquote(u.password or '')}, args=['--ignore-certificate-errors'])
+    else: br = p.chromium.launch()
     A = br.new_context(viewport={'width': 412, 'height': 900}).new_page(); B = br.new_context(viewport={'width': 412, 'height': 900}).new_page()
     A.goto(BASE + '/'); B.goto(BASE + '/')
     check(A.evaluate(js('auth/signup', {'email': EMAIL, 'password': PW, 'name': 'QA'}))['s'] == 200, 'A signs up')
