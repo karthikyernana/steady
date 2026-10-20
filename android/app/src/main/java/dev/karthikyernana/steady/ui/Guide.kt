@@ -2,6 +2,7 @@ package dev.karthikyernana.steady.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -49,7 +50,7 @@ fun Guide(onDone: () -> Unit) {
             }
             HorizontalPager(pager, Modifier.weight(1f).fillMaxWidth()) { i ->
                 val p = PAGES[i]
-                Column(Modifier.fillMaxSize().widthIn(max = 520.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+                Column(Modifier.fillMaxSize().verticalScroll(androidx.compose.foundation.rememberScrollState()).widthIn(max = 520.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
                     Box(Modifier.size(88.dp).clip(CircleShape).background(P.accentSoft), contentAlignment = Alignment.Center) { Icon(p.icon, null, tint = P.accent, modifier = Modifier.size(40.dp)) }
                     Spacer(Modifier.height(26.dp))
                     Text(p.title, style = Type.display.copy(fontSize = 32.sp), color = P.ink, textAlign = TextAlign.Center)

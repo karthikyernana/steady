@@ -6,6 +6,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
+import kotlinx.serialization.json.put
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -46,10 +47,22 @@ fun Welcome(onDone: () -> Unit) {
 private fun LocalForm(onDone: () -> Unit, onBack: () -> Unit) {
     val c = LocalCtx.current
     var name by remember { mutableStateOf("") }
-    SField(name, { name = it }, "What should I call you?", testTag = "onb-name", ime = ImeAction.Done, onIme = {})
+    var goal by remember { mutableStateOf("") }
+    var wake by remember { mutableStateOf("07:00") }
+    var sleep by remember { mutableStateOf("23:30") }
+    SField(name, { name = it }, "What should I call you?", testTag = "onb-name", ime = ImeAction.Next, onIme = {})
+    Spacer(Modifier.height(10.dp))
+    SField(goal, { goal = it }, "One goal you're working on (optional)", testTag = "onb-goal")
+    Spacer(Modifier.height(6.dp))
+    // your rhythm: reminders and "late" advice follow it
+    TimeField("I usually wake at", wake) { it?.let { v -> wake = v } }
+    TimeField("I usually sleep at", sleep) { it?.let { v -> sleep = v } }
     Spacer(Modifier.height(14.dp))
     PrimaryButton("Start", Modifier.fillMaxWidth(), enabled = name.isNotBlank()) {
-        c.app.store.setMeta("profile", "name" to name.trim())
+        c.app.store.setMeta("profile", "name" to name.trim(), "wake" to wake, "sleep" to sleep)
+        if (goal.isNotBlank()) c.app.store.save("goals", kotlinx.serialization.json.buildJsonObject {
+            put("id", dev.karthikyernana.steady.data.uid()); put("title", goal.trim().replaceFirstChar { it.uppercase() }); put("why", "")
+            put("target", dev.karthikyernana.steady.core.Dates.today().plusWeeks(12).toString()); put("milestones", kotlinx.serialization.json.JsonArray(emptyList())); put("actions", kotlinx.serialization.json.JsonArray(emptyList())); put("order", 0) })
         c.app.store.setLocal("onboarded", "1")
         onDone()
     }

@@ -61,6 +61,7 @@ fun MoneyScreen() {
     val c = LocalCtx.current
     var month by rememberSaveable { mutableStateOf(YearMonth.now(Dates.zone).toString()) }
     var editing by remember { mutableStateOf<Money?>(null) }
+    var newEntry by remember { mutableStateOf<dev.karthikyernana.steady.core.MoneyDraft?>(null) }
     var budgetOpen by remember { mutableStateOf(false) }
     var quick by rememberSaveable { mutableStateOf("") }
     val mk = month
@@ -85,9 +86,10 @@ fun MoneyScreen() {
                         androidx.compose.foundation.text.BasicTextField(value = quick, onValueChange = { v: String -> quick = v }, textStyle = Type.body.copy(fontSize = 16.sp, color = P.ink), singleLine = true,
                             cursorBrush = androidx.compose.ui.graphics.SolidColor(P.accent), modifier = Modifier.fillMaxWidth().testTag("money-quick-inline"),
                             keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Done),
-                            keyboardActions = androidx.compose.foundation.text.KeyboardActions(onDone = { if (draft?.amount != null) { saveDraft(c, draft); quick = "" } }))
+                            keyboardActions = androidx.compose.foundation.text.KeyboardActions(onDone = { if (draft?.amount != null) { saveDraft(c, draft); quick = "" } else if (draft != null) { newEntry = draft; quick = "" } }))
                     }
-                    Button(onClick = { if (draft?.amount != null) { saveDraft(c, draft); quick = "" } }, enabled = draft?.amount != null, shape = RoundedCornerShape(999.dp),
+                    // no amount in the words: open the full form, prefilled, instead of a dead button
+                    Button(onClick = { if (draft?.amount != null) { saveDraft(c, draft); quick = "" } else if (draft != null) { newEntry = draft; quick = "" } }, enabled = draft != null, shape = RoundedCornerShape(999.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = P.ink, contentColor = P.ground), modifier = Modifier.testTag("money-add")) { Text("Add", style = Type.bodyM) }
                 }
                 if (draft != null) Row(Modifier.padding(start = 14.dp, end = 14.dp, bottom = 12.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -154,6 +156,7 @@ fun MoneyScreen() {
         }
     }
     editing?.let { MoneySheet(it) { editing = null } }
+    newEntry?.let { d -> MoneySheet(null, d) { newEntry = null } }
     if (budgetOpen) BudgetSheet(budget) { budgetOpen = false }
 }
 
@@ -187,15 +190,15 @@ private fun BudgetSheet(current: Double?, onClose: () -> Unit) {
 }
 
 @Composable
-fun MoneySheet(m: Money?, onClose: () -> Unit) {
+fun MoneySheet(m: Money?, prefill: dev.karthikyernana.steady.core.MoneyDraft? = null, onClose: () -> Unit) {
     val c = LocalCtx.current
     var quick by remember { mutableStateOf("") }
-    var kind by remember { mutableStateOf(m?.kind ?: "expense") }
+    var kind by remember { mutableStateOf(m?.kind ?: prefill?.kind ?: "expense") }
     var amount by remember { mutableStateOf(m?.amount?.let { fmtAmount(it).replace(",", "") } ?: "") }
-    var category by remember { mutableStateOf(m?.category ?: "Other") }
-    var payee by remember { mutableStateOf(m?.payee ?: "") }
-    var note by remember { mutableStateOf(m?.note ?: "") }
-    var date by remember { mutableStateOf(m?.date ?: Dates.todayKey()) }
+    var category by remember { mutableStateOf(m?.category ?: prefill?.category ?: "Other") }
+    var payee by remember { mutableStateOf(m?.payee ?: prefill?.payee ?: "") }
+    var note by remember { mutableStateOf(m?.note ?: prefill?.note ?: "") }
+    var date by remember { mutableStateOf(m?.date ?: prefill?.date ?: Dates.todayKey()) }
     SSheet(onClose, if (m == null) "Add money" else "Edit") {
         if (m == null) {
             SField(quick, { v ->

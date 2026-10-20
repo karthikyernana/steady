@@ -177,6 +177,7 @@ fun ThoughtSheet(t: Thought, onClose: () -> Unit) {
     val c = LocalCtx.current
     var text by remember { mutableStateOf(t.text) }
     var kind by remember { mutableStateOf(t.kind) }
+    var mood by remember { mutableIntStateOf(t.mood) }
     var edit by remember { mutableStateOf(false) }
     SSheet(onClose, if (edit) "Edit thought" else t.kind.replaceFirstChar { it.uppercase() }) {
         androidx.compose.animation.AnimatedContent(edit, label = "th-mode") { e ->
@@ -193,12 +194,22 @@ fun ThoughtSheet(t: Thought, onClose: () -> Unit) {
                     SField(text, { text = it }, "Thought", singleLine = false, minLines = 3)
                     Spacer(Modifier.height(10.dp))
                     Segmented(listOf("note" to "Note", "idea" to "Idea", "journal" to "Journal"), kind, { kind = it }, Modifier.fillMaxWidth())
+                    Spacer(Modifier.height(12.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        MOOD_COLORS.forEachIndexed { i, col ->
+                            val on = mood == i + 1
+                            Box(Modifier.padding(end = 8.dp).size(36.dp).clip(CircleShape).clickable { mood = i + 1 }.semantics { contentDescription = "Mood ${MOODS[i]}" }, contentAlignment = Alignment.Center) {
+                                Box(Modifier.size(if (on) 26.dp else 18.dp).clip(CircleShape).background(col.copy(alpha = if (on) 1f else 0.55f)))
+                            }
+                        }
+                        Text(MOODS[(mood - 1).coerceIn(0, 4)], style = Type.small, color = P.ink2)
+                    }
                     Spacer(Modifier.height(16.dp))
                     PrimaryButton("Save", Modifier.fillMaxWidth(), enabled = text.isNotBlank()) {
-                        c.app.store.save("thoughts", t.raw.with("text" to text.trim(), "tags" to JsonArray(tagsIn(text).map(::JsonPrimitive)), "kind" to kind)); onClose()
+                        c.app.store.save("thoughts", t.raw.with("text" to text.trim(), "tags" to JsonArray(tagsIn(text).map(::JsonPrimitive)), "kind" to kind, "mood" to mood)); onClose()
                     }
                     Spacer(Modifier.height(8.dp))
-                    GhostButton("Cancel", Modifier.fillMaxWidth()) { text = t.text; kind = t.kind; edit = false }
+                    GhostButton("Cancel", Modifier.fillMaxWidth()) { text = t.text; kind = t.kind; mood = t.mood; edit = false }
                 }
             }
         }

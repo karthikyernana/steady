@@ -27,7 +27,7 @@ class ScreenshotTest {
     private val out = File(System.getProperty("steady.shots") ?: "build/shots").apply { mkdirs() }
 
     private fun shot(name: String) {
-        rule.waitForIdle(); rule.mainClock.advanceTimeBy(1200); rule.waitForIdle()
+        rule.waitForIdle(); rule.mainClock.advanceTimeBy(2500); rule.waitForIdle()
         // draw the whole window (incl. dialogs/sheets are separate windows, so we draw the top-most decor view)
         @Suppress("UNCHECKED_CAST")
         val views = Class.forName("android.view.WindowManagerGlobal").getMethod("getInstance").invoke(null).let { g -> g.javaClass.getDeclaredField("mViews").apply { isAccessible = true }.get(g) as List<android.view.View> }.toList()

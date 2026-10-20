@@ -13,6 +13,8 @@ data class Analysis(
     val last14: List<Pair<String, Int>>, val avgDone: Double, val daysAway: Int?,
     val bestShare: Double = 0.0, val enough: Boolean = false, val loadCap: Int = 3, val checkins14: Int = 0, val rate30: Double? = null,
     val bestDay: Pair<Int, Double>? = null, val worstDay: Pair<Int, Double>? = null,
+    /** Why today should be small (away 2+ days, or 2 of the last 3 days under a third done), or null. */
+    val slump: String? = null,
 )
 
 object Engine {
@@ -55,7 +57,12 @@ object Engine {
         val ci14 = (1..14).count { Dates.keyAdd(today, -it.toLong()) in checkinDays }
         return Analysis(today, cur, longest, bestStart, doneOn, hourHist, last14, avg, away,
             bestShare = if (total > 0) bestCount.toDouble() / total else 0.0, enough = done.size >= MIN_DATA, loadCap = maxOf(3, Math.round(avg * 1.25).toInt() + 1),
-            checkins14 = ci14, rate30 = if (p30 > 0) d30.toDouble() / p30 else null, bestDay = bestDay, worstDay = worstDay)
+            checkins14 = ci14, rate30 = if (p30 > 0) d30.toDouble() / p30 else null, bestDay = bestDay, worstDay = worstDay,
+            slump = when {
+                away != null && away >= 2 -> "It's been $away days. No catching up needed."
+                (1..3).count { i -> planned[Dates.keyAdd(today, -i.toLong())]?.let { it[0] > 0 && it[1].toDouble() / it[0] < 0.34 } == true } >= 2 -> "The last few days were heavy."
+                else -> null
+            })
     }
 
     private val DAYS = listOf("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday")
@@ -80,16 +87,15 @@ object Engine {
 
     fun fmtHour(h: Int): String { val ap = if (h in 12..23) "PM" else "AM"; return "${if (h % 12 == 0) 12 else h % 12} $ap" }
 
-    fun todayLine(s: Snapshot, a: Analysis, total: Int, done: Int, open: Int, now: LocalDateTime = LocalDateTime.now(Dates.zone)): String {
+    fun todayLine(s: Snapshot, a: Analysis, total: Int, done: Int, open: Int, now: LocalDateTime = LocalDateTime.now(Dates.zone), mvd: Boolean = false): String {
+        if (mvd && open > 0) return "A small day on purpose. Three little things is a full win."
         val h = now.hour; val m = h * 60 + now.minute
         var sleep = Dates.toMin(s.profile.str("sleep") ?: "23:30") ?: 1410; if (sleep < 360) sleep += 1440
         val mNow = if (m < 360) m + 1440 else m
-        val yEnergy = s.checkins.firstOrNull { it.date == Dates.keyAdd(a.today, -1) }?.energy
         val best = a.bestStart
         if (total > 0 && open == 0) return if (done > 0) "All $done done. Rest is part of the plan." else "Everything decided. Rest is part of the plan."
         if (mNow >= sleep - 45 && open > 0) return "It's late. Whatever's left can wait for tomorrow; sleep is the better investment."
         if ((a.daysAway ?: 0) >= 2) return "Welcome back. No catching up needed; start with one small thing."
-        if (yEnergy != null && yEnergy <= 2) return "Your energy was low yesterday. Go gentle and pick the easy wins first."
         if (total == 0) return if (h < 12) "Pick the one thing that would make today count." else "Nothing planned yet. One small thing is enough to start."
         if (best != null) {
             if (h >= best && h < best + 2) return "You're in your best hours now. Good time for the hard one."
@@ -99,6 +105,16 @@ object Engine {
         if (done > 0 && open > 0) return "$done down, $open to go. Steady pace."
         return if (h < 12) "$open on the list. Start with the smallest; momentum does the rest." else "$open still open. Pick one and finish it."
     }
+
+    /** Minimum viable day: up to 3 tiny things (≤30 min) instead of the whole list (mvdPicks in engine.js). */
+    fun mvdPicks(open: List<Task>): List<Task> {
+        val sorted = open.sortedWith(compareBy<Task>({ it.durationMin ?: 15 }, { -it.priority }))
+        val tiny = sorted.filter { (it.durationMin ?: 15) <= 30 }.take(3)
+        return tiny.ifEmpty { sorted.take(1) }
+    }
+    /** One 5-minute start per goal, from its first daily action (tinyFromGoals in engine.js). */
+    fun tinyFromGoals(goals: List<dev.karthikyernana.steady.data.Goal>): List<String> =
+        goals.mapNotNull { g -> g.actions.firstOrNull()?.let { "$it (just 5 minutes)" } }.ifEmpty { listOf("Drink a glass of water and plan tomorrow in one line", "Five minutes on the thing that matters most") }.take(2)
 
     fun isCheckinTime(s: Snapshot, now: LocalDateTime = LocalDateTime.now(Dates.zone)): Boolean {
         var sleep = Dates.toMin(s.profile.str("sleep") ?: "23:30") ?: 1410; if (sleep < 360) sleep += 1440

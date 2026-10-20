@@ -3,6 +3,10 @@ package dev.karthikyernana.steady.ui.screens
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.material.icons.outlined.Spa
+import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -71,7 +75,15 @@ fun TodayScreen(onCheckin: () -> Unit) {
     val nDone = todays.count { it.isDone }
     val carry = Engine.sortTasks(s.tasks.filter { it.isOpen && it.dueDate != null && it.dueDate!! < tk && it.raw.bool("letGo") != true })
     val later = Engine.sortTasks(s.tasks.filter { it.isOpen && it.dueDate != null && it.dueDate!! > tk && it.dueDate!! <= Dates.keyAdd(tk, 7) })
-    val sub = Engine.todayLine(s, a, todays.size, nDone, open.size)
+    var mvdDay by remember { mutableStateOf(c.app.store.local("mvdDay")) }
+    var mvdDismissed by remember { mutableStateOf(c.app.store.local("mvdDismissed")) }
+    var loadDismissed by remember { mutableStateOf(c.app.store.local("loadDismissed")) }
+    var showRest by rememberSaveable { mutableStateOf(false) }
+    val mvdOn = mvdDay == tk
+    fun setL(k: String, v: String?) { c.app.store.setLocal(k, v); when (k) { "mvdDay" -> mvdDay = v; "mvdDismissed" -> mvdDismissed = v; "loadDismissed" -> loadDismissed = v } }
+    fun quickAdd(title: String, goalId: String? = null, dur: Int? = null) = c.app.store.save("tasks", buildJsonObject {
+        put("id", uid()); put("title", title); put("priority", 2); put("dueDate", tk); put("dueTime", JsonNull); put("durationMin", dur); put("reminder", false); put("status", "open"); put("doneAt", JsonNull); put("goalId", goalId) })
+    val sub = Engine.todayLine(s, a, todays.size, nDone, open.size, mvd = mvdOn)
     var editing by remember { mutableStateOf<Task?>(null) }
     var showDone by rememberSaveable { mutableStateOf(false) }
     var showLater by rememberSaveable { mutableStateOf(false) }
@@ -80,26 +92,65 @@ fun TodayScreen(onCheckin: () -> Unit) {
     LazyColumn(Modifier.fillMaxSize().testTag("today"), contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 6.dp, bottom = 170.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item(key = "head") {
             if (name != null) PageHead(Dates.longDate().replace(",", ",").uppercase(), Dates.greeting() + ", ", name, ".", sub, subTag = "today-sub",
-                trailing = { if (todays.isNotEmpty()) { Spacer(Modifier.width(10.dp)); Ring(nDone.toFloat() / todays.size, "${todays.size - open.size}") } })
+                trailing = { val countable = todays.count { it.status != "skipped" }; Spacer(Modifier.width(10.dp)); Ring(if (countable == 0) 0f else nDone.toFloat() / countable, "$nDone") })
             else PageHead(Dates.longDate().uppercase(), Dates.greeting(), "", ".", sub, subTag = "today-sub",
-                trailing = { if (todays.isNotEmpty()) { Spacer(Modifier.width(10.dp)); Ring(nDone.toFloat() / todays.size, "${todays.size - open.size}") } })
+                trailing = { val countable = todays.count { it.status != "skipped" }; Spacer(Modifier.width(10.dp)); Ring(if (countable == 0) 0f else nDone.toFloat() / countable, "$nDone") })
         }
         item(key = "composer") { Composer() }
         if (todays.any { it.dueTime != null }) item(key = "daystrip") { DayStrip(todays, s.profile.str("wake") ?: "07:00", s.profile.str("sleep") ?: "23:30") }
         if (carry.isNotEmpty()) item(key = "carry") {
             SCard(tint = P.surface2) {
                 Text(if (carry.size == 1) "One thing from before is still open." else "${carry.size} things from before are still open.", style = Type.h3, color = P.ink)
+                Text(carry.take(3).joinToString(" · ") { it.title } + if (carry.size > 3) " · +${carry.size - 3} more" else "", style = Type.small, color = P.muted, maxLines = 2, modifier = Modifier.padding(top = 2.dp))
                 Spacer(Modifier.height(10.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    PrimaryButton("Move to today") { carry.forEach { t -> c.app.store.save("tasks", t.raw.with("dueDate" to tk)) }; c.toast("Moved to today.", null) }
-                    GhostButton("Let them go") { carry.forEach { t -> c.app.store.save("tasks", t.raw.with("letGo" to true, "status" to "skipped")) }; c.toast("Let go. Fresh start.", null) }
+                    PrimaryButton("Bring forward") { val prev = carry.map { it.raw }; carry.forEach { t -> c.app.store.save("tasks", t.raw.with("dueDate" to tk, "carried" to true)) }; c.toast("Moved to today.") { prev.forEach { r -> c.app.store.save("tasks", r) } } }
+                    GhostButton(if (carry.size == 1) "Let it go" else "Let them go") { val prev = carry.map { it.raw }; carry.forEach { t -> c.app.store.save("tasks", t.raw.with("letGo" to true, "status" to "skipped")) }; c.toast("Let go. Fresh start.") { prev.forEach { r -> c.app.store.save("tasks", r) } } }
                 }
             }
         }
-        if (open.isNotEmpty()) {
+        // adaptive: a slump offers a small day; an over-full day offers to lighten (engine.js slump / loadCap)
+        if (a.slump != null && !mvdOn && open.isNotEmpty() && mvdDismissed != tk) item(key = "mvd-offer") {
+            Prompt(androidx.compose.material.icons.Icons.Outlined.Spa, "${a.slump} Let's make today small.", "Just ${minOf(3, open.size)} tiny things. The rest waits.", P.accentSoft, "mvd-offer") {
+                PrimaryButton("Make it a small day", Modifier.testTag("mvd-on")) { setL("mvdDay", tk); c.toast("Small day it is. Three things, max.", null) }
+                GhostButton("I'm good") { setL("mvdDismissed", tk) }
+            }
+        } else if (a.slump != null && !mvdOn && todays.isEmpty()) item(key = "mvd-tiny") {
+            Prompt(androidx.compose.material.icons.Icons.Outlined.Spa, a.slump, "Start tiny. Pick one:", P.accentSoft, "mvd-tiny") {
+                Engine.tinyFromGoals(s.goals).forEach { t -> ChipButton(t) { quickAdd(t, dur = 5); setL("mvdDay", tk) } }
+            }
+        } else if (!mvdOn && open.size > a.loadCap && a.enough && loadDismissed != tk) item(key = "load-hint") {
+            val extra = open.size - a.loadCap
+            Prompt(androidx.compose.material.icons.Icons.Outlined.AutoAwesome, "${open.size} open today. You usually finish about ${maxOf(1, Math.round(a.avgDone).toInt())}.", "Move the $extra lowest-priority ${if (extra == 1) "one" else "ones"} to tomorrow?", P.surface2, "load-hint") {
+                PrimaryButton("Lighten today", Modifier.testTag("lighten")) {
+                    val moved = open.sortedWith(compareBy<Task>({ it.priority }, { -(it.durationMin ?: 0) })).take(extra)
+                    val prev = moved.map { it.raw }; val tm = Dates.keyAdd(tk, 1)
+                    moved.forEach { c.app.store.save("tasks", it.raw.with("dueDate" to tm)) }
+                    c.toast("Moved $extra to tomorrow.") { prev.forEach { r -> c.app.store.save("tasks", r) } }
+                }
+                GhostButton("Keep it") { setL("loadDismissed", tk) }
+            }
+        }
+        if (mvdOn && open.isNotEmpty()) {
+            val picks = Engine.mvdPicks(open); val rest = open.filter { it !in picks }
+            item(key = "sh-mvd") { SectionHead("Just these today", action = "Show full day", onAction = { setL("mvdDay", null) }) }
+            items(picks, key = { "t-" + it.id }) { t -> TaskRow(t, s, Modifier.animateItem(), onEdit = { editing = t }) }
+            if (rest.isNotEmpty()) {
+                item(key = "sh-rest") { Disclosure("Everything else can wait · ${rest.size}", showRest) { showRest = !showRest } }
+                if (showRest) items(rest, key = { "r-" + it.id }) { t -> TaskRow(t, s, Modifier.animateItem().graphicsLayer { alpha = 0.7f }, onEdit = { editing = t }) }
+            }
+        } else if (open.isNotEmpty()) {
             item(key = "sh-today") { SectionHead("Today", "${open.size} open") }
             items(open, key = { "t-" + it.id }) { t -> TaskRow(t, s, Modifier.animateItem(), onEdit = { editing = t }) }
-        } else if (todays.isEmpty()) item(key = "empty") { EmptyNote("A clear page.", "Add one small thing above, or tap the mic and just say it.") }
+        } else if (todays.isEmpty()) item(key = "empty") {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+                EmptyNote("A clear page.", "Add one small thing above, or tap the mic and just say it.")
+                val acts = s.goals.flatMap { g -> g.actions.take(2).map { g to it } }.take(4)
+                if (acts.isNotEmpty()) @OptIn(ExperimentalLayoutApi::class) FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    acts.forEach { (g, t) -> ChipButton(t) { quickAdd(t, g.id); c.toast("Added to today.", null) } }
+                }
+            }
+        }
         else item(key = "allDone") { EmptyNote("That's the day.", if (a.streakCurrent >= 2) "${a.streakCurrent} days in a row now." else "Be proud of that, and rest.") }
         if (later.isNotEmpty()) {
             item(key = "sh-later") { Disclosure("Next 7 days · ${later.size}", showLater) { showLater = !showLater } }
@@ -128,7 +179,7 @@ private fun Composer() {
         val rec = addTask(c, p)
         text = ""; focus.clearFocus()
         val when_ = listOfNotNull(if (p.dueDate != Dates.todayKey()) Dates.fmtDateKey(p.dueDate) else null, p.dueTime?.let { Dates.fmtTime(it) }).joinToString(" ")
-        c.toast(if (when_.isEmpty()) "Added." else "Added for $when_.") { c.app.store.remove("tasks", rec.str("id")!!) }
+        c.toast(if (when_.isEmpty()) "Added to today." else "Added for $when_.") { c.app.store.remove("tasks", rec.str("id")!!) }
     }
     SCard(pad = 0.dp, shape = RoundedCornerShape(22.dp), modifier = Modifier.animateContentSize()) {
         Row(Modifier.padding(start = 14.dp, end = 6.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -145,6 +196,34 @@ private fun Composer() {
         if (parsed != null && parsed.chips.isNotEmpty()) Row(Modifier.padding(start = 14.dp, end = 14.dp, bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             parsed.chips.take(4).forEach { Pill(it, color = P.accent, bg = P.accentSoft) }
         }
+    }
+}
+
+/** An adaptive suggestion card: icon, one headline, one line, and its buttons (the web's .card.prompt). */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun Prompt(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String, body: String, tint: androidx.compose.ui.graphics.Color, tag: String, actions: @Composable () -> Unit) {
+    SCard(Modifier.testTag(tag), tint = tint) {
+        Row(verticalAlignment = Alignment.Top) {
+            Box(Modifier.size(34.dp).clip(RoundedCornerShape(11.dp)).background(P.surface.copy(alpha = .8f)), contentAlignment = Alignment.Center) { Icon(icon, null, tint = P.accent, modifier = Modifier.size(19.dp)) }
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, style = Type.h3.copy(fontSize = 17.sp, lineHeight = 23.sp), color = P.ink)
+                Spacer(Modifier.height(2.dp)); Text(body, style = Type.small, color = P.ink2)
+                Spacer(Modifier.height(10.dp))
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { actions() }
+            }
+        }
+    }
+}
+
+/** A one-tap "+ add this" chip. */
+@Composable
+fun ChipButton(label: String, onClick: () -> Unit) {
+    Row(Modifier.clip(RoundedCornerShape(999.dp)).background(P.surface).border(1.dp, P.line2, RoundedCornerShape(999.dp)).springClick(onClick = onClick).padding(horizontal = 12.dp, vertical = 9.dp).testTag("chip-add"),
+        verticalAlignment = Alignment.CenterVertically) {
+        Icon(Icons.Rounded.Add, null, tint = P.accent, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(6.dp))
+        Text(label, style = Type.label.copy(fontSize = 13.sp), color = P.ink, maxLines = 2)
     }
 }
 
@@ -168,7 +247,7 @@ fun TaskRow(t: Task, s: Snapshot, modifier: Modifier = Modifier, showDate: Boole
                 CheckDot(done = t.isDone) { setStatus(c, t, if (t.isOpen) "done" else "open") }
                 Column(Modifier.weight(1f).padding(vertical = 10.dp)) {
                     Text(t.title, style = Type.bodyM.copy(fontSize = 16.sp), color = if (t.isOpen) P.ink else P.muted, textDecoration = if (t.isDone) TextDecoration.LineThrough else null, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    val bits = listOfNotNull(if (showDate) Dates.fmtDateKey(t.dueDate) else null, t.dueTime?.let { Dates.fmtTime(it) }, t.durationMin?.let { "$it min" }, if (t.status == "skipped") "skipped" else null)
+                    val bits = listOfNotNull(if (t.raw.bool("carried") == true && t.isOpen) "carried over" else null, if (showDate) Dates.fmtDateKey(t.dueDate) else null, t.dueTime?.let { Dates.fmtTime(it) }, t.durationMin?.let { "$it min" }, if (t.status == "skipped") "skipped" else null)
                     if (bits.isNotEmpty() || goal != null) Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 2.dp)) {
                         if (t.reminder && t.dueTime != null && t.isOpen) { Icon(Icons.Outlined.Notifications, "Reminder on", tint = P.muted, modifier = Modifier.size(13.dp)); Spacer(Modifier.width(3.dp)) }
                         if (bits.isNotEmpty()) Text(bits.joinToString("  "), style = Type.small, color = P.muted, maxLines = 1)

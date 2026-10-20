@@ -36,4 +36,23 @@ class StoreTest {
         assertEquals(0, b.pendingCount())
         f.delete()
     }
+
+    @Test fun backupRoundTripNeverOverwritesNewer() {
+        val a = Store(JdbcSql())
+        a.save("tasks", buildJsonObject { put("id", "t1"); put("title", "Old title") })
+        a.save("money", buildJsonObject { put("id", "m1"); put("amount", 250); put("category", "Food"); put("date", "2026-10-20") })
+        a.save("thoughts", buildJsonObject { put("id", "x"); put("text", "gone") }); a.remove("thoughts", "x")
+        val backup = a.exportJson()
+        assertTrue(backup.contains("\"app\":\"steady\""))
+        // a fresh phone gets everything, tombstones included
+        val b = Store(JdbcSql())
+        assertEquals(3, b.importJson(backup))
+        assertEquals("Old title", b.get("tasks", "t1")!!.str("title")); assertNull(b.get("thoughts", "x"))
+        // newer local edit survives importing the older backup
+        b.save("tasks", b.get("tasks", "t1")!!.with("title" to "New title"))
+        assertEquals(0, b.importJson(backup))
+        assertEquals("New title", b.get("tasks", "t1")!!.str("title"))
+        assertThrows(IllegalArgumentException::class.java) { b.importJson("{\"hello\":1}") }
+        assertThrows(IllegalArgumentException::class.java) { b.importJson("not json") }
+    }
 }

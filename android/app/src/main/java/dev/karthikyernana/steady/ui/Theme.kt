@@ -53,7 +53,7 @@ val LocalPalette = staticCompositionLocalOf { LightPalette }
 val P: Palette @Composable get() = LocalPalette.current
 
 object Type {
-    val display = TextStyle(fontFamily = Sans, fontWeight = FontWeight.SemiBold, fontSize = 31.sp, lineHeight = 36.sp, letterSpacing = (-0.8).sp)
+    val display = TextStyle(fontFamily = Sans, fontWeight = FontWeight.SemiBold, fontSize = 31.sp, lineHeight = 36.sp, letterSpacing = (-0.8).sp, lineBreak = androidx.compose.ui.text.style.LineBreak.Simple)
     val h2 = TextStyle(fontFamily = Sans, fontWeight = FontWeight.SemiBold, fontSize = 21.sp, lineHeight = 26.sp, letterSpacing = (-0.4).sp)
     val h3 = TextStyle(fontFamily = Sans, fontWeight = FontWeight.Medium, fontSize = 18.sp, lineHeight = 24.sp, letterSpacing = (-0.2).sp)
     val body = TextStyle(fontFamily = Sans, fontSize = 15.sp, lineHeight = 21.sp)

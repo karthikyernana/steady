@@ -20,6 +20,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import dev.karthikyernana.steady.core.Dates
 import dev.karthikyernana.steady.data.*
 import dev.karthikyernana.steady.ui.*
@@ -65,11 +66,13 @@ fun GoalsScreen() {
                     Text(if (ms.isEmpty()) "No milestones yet" else "${ms.count { it.done }} of ${ms.size} milestones", style = Type.small, color = P.muted, modifier = Modifier.weight(1f))
                     g.target?.let { Text("by ${Dates.fmtDateKey(it, relative = false)}", style = Type.small, color = P.muted) }
                 }
+                if (ms.isNotEmpty() && ms.all { it.done }) { Spacer(Modifier.height(10.dp)); Text("All milestones done. Time to set the next ones.", style = Type.small, color = P.accent) }
+                if (ms.isEmpty()) { Spacer(Modifier.height(6.dp)); Text("Plan weekly milestones →", style = Type.label.copy(fontSize = 13.sp), color = P.accent, modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { editing = g }.padding(vertical = 6.dp)) }
                 if (current != null) {
                     Spacer(Modifier.height(12.dp))
                     Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(P.surface2.copy(alpha = 0.7f)).padding(end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                         CheckDot(done = current.done) { toggleMilestone(c, g, current.id) }
-                        Column(Modifier.weight(1f).padding(vertical = 10.dp)) { Eyebrow(current.week?.let { "Week of " + Dates.fmtDateKey(it, relative = false).substringAfter(", ") } ?: "Next up"); Spacer(Modifier.height(2.dp)); Text(current.title, style = Type.bodyM.copy(fontSize = 16.sp), color = P.ink) }
+                        Column(Modifier.weight(1f).padding(vertical = 10.dp)) { Eyebrow(weekLabel(current.week)); Spacer(Modifier.height(2.dp)); Text(current.title, style = Type.bodyM.copy(fontSize = 16.sp), color = P.ink) }
                     }
                 }
                 val actions = g.raw.arr("actions").mapNotNull { it as? JsonObject }

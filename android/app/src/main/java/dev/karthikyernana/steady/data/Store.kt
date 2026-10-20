@@ -7,7 +7,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.*
 
 /**
  * Local-first store: SQLite on the device is the source of truth; everything is also held in memory (a personal
@@ -107,6 +107,36 @@ class Store(private val db: Sql) {
     private fun write(coll: String, id: String, rec: JsonObject, dirty: Boolean) {
         mem[coll]?.set(id, rec)
         db.exec("insert or replace into records (coll, id, json, updated_at, dirty) values (?, ?, ?, ?, ?)", arrayOf(coll, id, rec.toString(), rec.long("updatedAt") ?: 0L, if (dirty) 1 else 0))
+    }
+
+    // ---- backup (same document as the web's Export JSON: {app, schemaVersion, writtenAt, data:{coll:{id:rec}}}) ----
+    @Synchronized fun exportJson(): String = buildJsonObject {
+        put("app", "steady"); put("schemaVersion", SCHEMA_VERSION); put("writtenAt", java.time.Instant.now().toString()); put("exportedAt", java.time.Instant.now().toString())
+        putJsonObject("data") { for ((c, m) in mem) putJsonObject(c) { for ((id, r) in m) put(id, r) } }
+    }.toString()
+
+    /** Merge a backup with last-write-wins (an old backup never overwrites newer edits). Returns how many records changed. */
+    fun importJson(text: String): Int {
+        val doc = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull() ?: throw IllegalArgumentException("That file is not valid JSON.")
+        val data = (doc["data"] as? JsonObject) ?: doc
+        if (COLLECTIONS.none { data[it] != null }) throw IllegalArgumentException("This file is not a Steady export.")
+        var n = 0
+        synchronized(this) {
+            db.tx {
+                for (c in COLLECTIONS) {
+                    val recs = when (val v = data[c]) { is JsonObject -> v.values.mapNotNull { it as? JsonObject }; is JsonArray -> v.mapNotNull { it as? JsonObject }; else -> emptyList() }
+                    for (r0 in recs) {
+                        val id = r0.str("id") ?: continue
+                        val r = if (r0.bool("deleted") == true) r0 else normalize(c, r0) ?: continue
+                        val mine = mem[c]?.get(id)
+                        if (mine == null || (r.long("updatedAt") ?: 0L) > (mine.long("updatedAt") ?: 0L)) { write(c, id, r, dirty = true); n++ }
+                    }
+                }
+            }
+            publish()
+        }
+        if (n > 0) onLocalChange?.invoke()
+        return n
     }
 
     // ---- sync queue ----

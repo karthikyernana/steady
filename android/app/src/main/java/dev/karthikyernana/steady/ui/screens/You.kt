@@ -17,6 +17,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.Palette
+import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Sync
 import androidx.lifecycle.Lifecycle
@@ -109,6 +110,25 @@ fun YouScreen(onClose: () -> Unit, onGuide: () -> Unit = {}) {
         SCard {
             CardTitle(Icons.Outlined.Palette, "Appearance")
             Segmented(listOf("system" to "System", "light" to "Light", "dark" to "Dark"), c.theme, c.setTheme, Modifier.fillMaxWidth())
+        }
+
+        // your data: the same backup file as the web app's Export / Import
+        val exportL = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/json")) { uri ->
+            if (uri != null) runCatching { ctx.contentResolver.openOutputStream(uri)!!.use { it.write(c.app.store.exportJson().toByteArray()) } }
+                .onSuccess { c.toast("Backup saved.", null) }.onFailure { c.toast("Couldn't save the backup.", null) }
+        }
+        val importL = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri != null) runCatching { val t = ctx.contentResolver.openInputStream(uri)!!.use { it.readBytes().decodeToString() }; c.app.store.importJson(t) }
+                .onSuccess { n -> c.toast(if (n > 0) "Imported $n records." else "Nothing new in that file.", null) }.onFailure { e -> c.toast("Import failed: ${e.message}", null) }
+        }
+        SCard {
+            CardTitle(Icons.Outlined.Save, "Your data")
+            Text("Import merges by record and keeps newer changes.", style = Type.small, color = P.muted)
+            Spacer(Modifier.height(10.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                GhostButton("Export JSON", Modifier.weight(1f).testTag("export")) { exportL.launch("steady-${dev.karthikyernana.steady.core.Dates.todayKey()}.json") }
+                GhostButton("Import JSON", Modifier.weight(1f).testTag("import")) { importL.launch(arrayOf("application/json", "text/plain", "*/*")) }
+            }
         }
 
         Text("Steady ${BuildConfig.VERSION_NAME} for Android", style = Type.small, color = P.muted, modifier = Modifier.padding(start = 4.dp))
