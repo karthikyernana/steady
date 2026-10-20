@@ -22,8 +22,8 @@ with sync_playwright() as p:
         u = urllib.parse.urlparse(px); b = p.chromium.launch(proxy={'server': f'http://{u.hostname}:{u.port}', 'username': urllib.parse.unquote(u.username or ''), 'password': urllib.parse.unquote(u.password or '')}, args=['--ignore-certificate-errors'])
     else: b = p.chromium.launch()
     A, a = ctx(b, {'width': 412, 'height': 900}); onboard(a)
-    a.fill('#qa', 'pitch a client at 6pm'); a.wait_for_timeout(200)
-    chips = a.inner_text('#qa-chips'); rec('quick-add links goal + time', '6 PM' in chips and 'Land my first' in chips, chips.replace('\n', ' | '))
+    a.fill('#qa', 'pitch a client at 11:58pm'); a.wait_for_timeout(200)
+    chips = a.inner_text('#qa-chips'); rec('quick-add links goal + time', '11:58 PM' in chips and 'Land my first' in chips, chips.replace('\n', ' | '))
     a.press('#qa', 'Enter'); a.wait_for_timeout(400)
     open_signin(a)
     a.fill('[data-testid=si-email]', 'not-an-email'); a.click('[data-testid=si-continue]'); a.wait_for_timeout(200)
@@ -39,7 +39,9 @@ with sync_playwright() as p:
     bpg.fill('[data-testid=si-password]', 'wrong password'); bpg.click('[data-testid=si-login]'); bpg.wait_for_timeout(400)
     rec('wrong password refused', 'do not match' in bpg.inner_text('#si-err'))
     bpg.fill('[data-testid=si-password]', PW); bpg.click('[data-testid=si-login]'); bpg.wait_for_selector('[data-testid=sync-status]', timeout=10000)
-    bpg.evaluate("location.hash='#/today'"); bpg.wait_for_timeout(1500)
+    bpg.evaluate("location.hash='#/today'")
+    try: bpg.wait_for_selector('.task:has-text("Pitch a client")', timeout=8000)   # first pull over a cold prod function can take a few seconds
+    except Exception: pass
     rec('existing data synced to second device', bpg.locator('.task:has-text("Pitch a client")').count() >= 1)
     a.evaluate("location.hash='#/today'"); a.wait_for_timeout(600)
     a.fill('#qa', 'live sync probe'); a.press('#qa', 'Enter'); t0 = time.time()

@@ -52,9 +52,19 @@ export function openGuide({ onDone } = {}) {
     next.textContent = i === PAGES.length - 1 ? 'Start using Steady' : 'Next';
   };
   paint(0);
-  const go = i => { i = Math.max(0, Math.min(PAGES.length - 1, i)); track.scrollTo({ left: i * track.clientWidth, behavior: reduce ? 'auto' : 'smooth' }); paint(i); };
-  let raf = 0;
-  track.addEventListener('scroll', () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(() => paint(Math.round(track.scrollLeft / Math.max(1, track.clientWidth)))); }, { passive: true });
+  // while a Next/arrow scroll is gliding, the in-between scroll positions must not repaint an older page
+  // (that made the dots flicker back and a quick second tap land on the same page)
+  let target = null, raf = 0;
+  const go = i => { i = Math.max(0, Math.min(PAGES.length - 1, i)); target = i; track.scrollTo({ left: i * track.clientWidth, behavior: reduce ? 'auto' : 'smooth' }); paint(i); };
+  track.addEventListener('scroll', () => {
+    cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(() => {
+      const at = Math.round(track.scrollLeft / Math.max(1, track.clientWidth));
+      if (target !== null) { if (Math.abs(track.scrollLeft - target * track.clientWidth) < 2) target = null; else return; }
+      paint(at);
+    });
+  }, { passive: true });
+  track.addEventListener('pointerdown', () => { target = null; }, { passive: true });   // a finger takes over
   const finish = async () => {
     if (!el.isConnected) return;
     open = null;

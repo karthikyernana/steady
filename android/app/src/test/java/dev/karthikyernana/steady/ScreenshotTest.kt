@@ -67,12 +67,12 @@ class ScreenshotTest {
     }
 
     private fun run(prefix: String, dark: Boolean) {
-        rule.onNodeWithText("Use on this phone only").performClick()
+        rule.onNodeWithText("Use on this phone only").performScrollTo().performClick()
         rule.onNodeWithTag("onb-name").performTextInput("Karthik")
-        rule.onNodeWithText("Start").performClick()
+        rule.onNodeWithText("Start").performScrollTo().performClick()
         shot("$prefix-0-guide")
         rule.onNodeWithTag("guide-skip").performClick()
-        if (dark) app.store.setLocal("theme", "dark")
+        if (dark) { rule.onNodeWithTag("you-btn").performClick(); rule.onNodeWithText("Dark").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick); rule.onNodeWithTag("tab-today").performClick() }
         seed()
         shot("$prefix-1-today")
         listOf("goals", "money", "thoughts", "insights").forEachIndexed { i, t -> rule.onNodeWithTag("tab-$t").performClick(); shot("$prefix-${i + 2}-$t") }

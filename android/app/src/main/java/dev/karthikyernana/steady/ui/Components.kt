@@ -102,7 +102,8 @@ fun PageHead(eyebrow: String, before: String, accent: String, after: String = ".
             Eyebrow(eyebrow)
             Spacer(Modifier.height(6.dp))
             Text(androidx.compose.ui.text.buildAnnotatedString {
-                append(before)
+                // a one-word lead ("Your week.") never wraps away from its accent word
+                append(if (before.isNotBlank() && !before.trim().contains(' ')) before.trimEnd() + "\u00A0" else before)
                 pushStyle(androidx.compose.ui.text.SpanStyle(color = P.accent)); append(accent); pop()
                 append(after)
             }, style = Type.display, color = P.ink)
